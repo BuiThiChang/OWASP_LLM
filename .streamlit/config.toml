@@ -1,0 +1,9 @@
+[client]
+showErrorDetails = true
+toolbarMode = "auto"
+
+[ui]
+hideTopBar = false
+
+[server]
+headless = true

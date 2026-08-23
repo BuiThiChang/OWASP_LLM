@@ -1,294 +1,183 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime
+from db_manager import get_recent_logs
 
-from test_cases import OWASP_TESTS
-from ollama_client import get_installed_models
-from db_manager import init_db, load_results
+import streamlit as st
+import os
 
-# Cấu hình trang Streamlit (Phải đặt ở đầu)
-st.set_page_config(page_title="AI Security Dashboard", page_icon="🛡️", layout="wide")
+# 1. Cấu hình Trang
+st.set_page_config(
+    page_title="LLMVault Security Suite & OWASP AI Guardrail",
+    page_icon="🛡️",
+    layout="wide"
+)
 
-# 1. Nút gạt chuyển đổi giao diện trên Sidebar (Mặc định bật Cyber Neon)
-cyber_mode = st.sidebar.toggle("🌌 Chế độ Cyber Neon", value=True)
+# ==============================================================================
+# 🔀 BỘ ĐIỀU HƯỚNG SPA (CHẠY TRỰC TIẾP CODE MODULE BẰNG EXEC)
+# ==============================================================================
+query_params = st.query_params
 
-# 2. Xử lý giao diện động theo trạng thái Toggle (Triệt tiêu hoàn toàn xung đột CSS)
-if cyber_mode:
-    st.markdown("""
-    <style>
-        #MainMenu { visibility: hidden !important; }
-        .stAppDeployButton { display: none !important; }
-
-        .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stMain"] {
-            background: radial-gradient(circle at 50% 20%, #0a2353 0%, #041026 60%, #020712 100%) !important;
-            background-attachment: fixed !important;
-            color: #e6edf3 !important;
-        }
-
-        section[data-testid="stSidebar"] {
-            background-color: rgba(4, 16, 38, 0.85) !important;
-            backdrop-filter: blur(12px);
-            border-right: 1px solid rgba(0, 210, 255, 0.3) !important;
-        }
-
-        h1, h2, h3 { 
-            color: #ffffff !important; 
-            text-shadow: 0 0 12px rgba(0, 210, 255, 0.6) !important; 
-        }
-
-        div[data-testid="stMetric"] {
-            background: rgba(7, 22, 48, 0.75) !important;
-            border: 1px solid rgba(0, 210, 255, 0.4) !important;
-            border-radius: 12px !important;
-        }
-        [data-testid="stMetricValue"] {
-            color: #00d2ff !important;
-            text-shadow: 0 0 14px rgba(0, 210, 255, 0.8) !important;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <style>
-        #MainMenu { visibility: hidden !important; }
-        .stAppDeployButton { display: none !important; }
-
-        .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stMain"] {
-            background: #ffffff !important;
-            color: #31333F !important;
-        }
-
-        section[data-testid="stSidebar"] {
-            background-color: #f0f2f6 !important;
-            border-right: 1px solid #e0e0e0 !important;
-            backdrop-filter: none !important;
-        }
-
-        h1, h2, h3, p, span, label { 
-            color: #31333F !important; 
-            text-shadow: none !important; 
-        }
-
-        div[data-testid="stMetric"] {
-            background: #f8f9fb !important;
-            border: 1px solid #e0e0e0 !important;
-            border-radius: 12px !important;
-            box-shadow: none !important;
-        }
-        [data-testid="stMetricValue"] {
-            color: #0083B0 !important;
-            text-shadow: none !important;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Khởi tạo CSDL SQLite nếu chưa có
-init_db()
-
-# Cấu hình thanh Sidebar
-with st.sidebar:
-    st.title("🛡️ AI Firewall Monitor")
-    st.subheader("Cấu hình mô hình")
-    available_models = get_installed_models()
-    model = st.selectbox("LLM Model đang giám sát", available_models)
-
-    st.divider()
-    st.subheader("📚 Danh mục OWASP LLM")
-    for cat in OWASP_TESTS.keys():
-        st.caption(f"• {cat}")
-
-# Tiêu đề giao diện
-st.title("🛡️ AI Security Dashboard & Real-time Audit Log")
-st.caption("Hệ thống giám sát và báo cáo an toàn mô hình ngôn ngữ lớn từ ứng dụng Ollama")
-
-# Tải dữ liệu từ SQLite
-all_results = load_results()
-
-# LỌC DỮ LIỆU
-results = [
-    r for r in all_results 
-    if str(r.get("id", "")).startswith("OLLAMA") or str(r.get("test_id", "")).startswith("OLLAMA") or r.get("category") == "Ollama Live Chat"
-]
-
-if not results and all_results:
-    results = all_results
-
-# BẢNG THỐNG KÊ NHANH (METRICS)
-total = len(results)
-passed = sum(1 for r in results if r["status"] == "PASS")
-failed = sum(1 for r in results if r["status"] in ["FAIL", "PROXY-BLOCKED"])
-score = (passed / total * 100) if total > 0 else 100
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Mô hình đang dùng", model)
-col2.metric("Tổng lượt tương tác", total)
-col3.metric("Số lượt An toàn (PASS)", passed)
-col4.metric("Tỷ lệ An toàn", f"{score:.0f}%")
-
-st.divider()
-
-# TABS HIỂN THỊ THỐNG KÊ
-tab1, tab_filter, tab2 = st.tabs([
-    "📊 Analytics & Audit Log (Ollama App)", 
-    "📅 Thống kê nâng cao (Theo Thời gian & Model)", 
-    "📚 OWASP LLM Top 10 Reference"
-])
-
-with tab1:
-    st.header("📊 Nhật ký & Thống kê Tương tác Real-time")
+if "page" in query_params:
+    page_target = query_params["page"]
     
-    if not results:
-        st.info("💡 Chưa có dữ liệu tương tác từ ứng dụng Ollama Desktop. Hãy nhập câu hỏi/prompt bên ứng dụng Ollama để xem nhật ký tại đây!")
-    else:
-        df = pd.DataFrame(results)
-
-        col_chart1, col_chart2 = st.columns([1, 1])
-        
-        with col_chart1:
-            st.subheader("🎯 Tỷ lệ An toàn theo Nhóm")
-            cat_stats = df.groupby("category")["status"].apply(lambda x: (x == "PASS").sum() / len(x) * 100).reset_index()
-            cat_stats.columns = ["Category", "Score"]
-
-            cats = cat_stats["Category"].tolist()
-            scores = cat_stats["Score"].tolist()
-
-            fig = go.Figure(go.Scatterpolar(
-                r=scores + [scores[0]] if scores else [],
-                theta=cats + [cats[0]] if cats else [],
-                fill='toself', name='Security Score %', line_color='#00d2ff',
-                fillcolor='rgba(0, 210, 255, 0.25)'
-            ))
-            fig.update_layout(
-                polar=dict(
-                    radialaxis=dict(visible=True, range=[0, 100]),
-                    angularaxis=dict(gridcolor="rgba(0, 210, 255, 0.2)")
-                ), 
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                showlegend=False, 
-                height=380
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col_chart2:
-            st.subheader("📈 Phân bố Trạng thái Phản hồi")
-            status_counts = df["status"].value_counts().reset_index()
-            status_counts.columns = ["Trạng thái", "Số lượng"]
-            st.bar_chart(status_counts.set_index("Trạng thái"), height=380)
-
-        st.divider()
-
-        st.subheader("📋 Bảng Nhật ký Chi tiết (SQLite Database)")
-        show_cols = ["timestamp", "model", "prompt", "response", "status", "reason"]
-        available_cols = [c for c in show_cols if c in df.columns]
-        
-        st.dataframe(
-            df[available_cols], 
-            use_container_width=True,
-            column_config={
-                "timestamp": "Thời gian",
-                "model": "Mô hình",
-                "prompt": "Prompt Người dùng",
-                "response": "Phản hồi AI / Proxy",
-                "status": "Trạng thái",
-                "reason": "Đánh giá An toàn"
-            }
-        )
-
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Export Full Audit Log (CSV)", csv, "ollama_security_audit.csv", "text/csv")
-
-# TAB THỐNG KÊ KẾT HỢP BỘ LỌC KHOẢNG THỜI GIAN, LLM VÀ OWASP RIÊNG BỆT
-with tab_filter:
-    st.header("📅 Thống kê Theo Lọc Khoảng Thời Gian & LLM")
+    # Xác định file module tương ứng
+    file_map = {
+        "red_team": "pages/1_red_team_audit.py",
+        "live_sandbox": "pages/2_live_sandbox.py",
+        "soc_monitor": "pages/3_soc_monitor.py"
+    }
     
-    if not all_results:
-        st.info("💡 Chưa có dữ liệu kiểm thử trong CSDL.")
-    else:
-        df_all = pd.DataFrame(all_results)
-        df_all["timestamp_dt"] = pd.to_datetime(df_all["timestamp"], errors='coerce')
-        
-        today = datetime.now()
-        first_day_curr_month = today.replace(day=1).date()
-        last_day_curr_month = today.date()
+    target_file = file_map.get(page_target)
+    
+    if target_file and os.path.exists(target_file):
+        # Nạp và thực thi code của trang con ngay tại đây
+        with open(target_file, "r", encoding="utf-8") as f:
+            code = f.read()
+        exec(code, globals())
+        st.stop() # Dừng không cho nạp trang chủ app.py bên dưới nữa
 
-        col_f1, col_f2, col_f3 = st.columns(3)
-        
-        with col_f1:
-            date_range = st.date_input(
-                "📅 Chọn khoảng thời gian:",
-                value=(first_day_curr_month, last_day_curr_month)
-            )
-            
-        with col_f2:
-            all_models = ["Tất cả"] + list(df_all["model"].unique())
-            selected_model = st.selectbox("🤖 Chọn loại LLM:", all_models)
-            
-        with col_f3:
-            owasp_keys = list(OWASP_TESTS.keys())
-            db_cats = df_all["category"].dropna().unique().tolist()
-            combined_cats = sorted(list(set(owasp_keys + db_cats)))
-            all_cats_options = ["Tất cả"] + combined_cats
-            selected_cat = st.selectbox("📌 Chọn nhóm OWASP/Category:", all_cats_options)
+# ==============================================================================
+# 🎨 GIAO DIỆN TRANG CHỦ DARSBOARD (HIỂN THỊ KHI TRUY CẬP LOCALHOST:8501)
+# ==============================================================================
 
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
-            df_filtered = df_all[
-                (df_all["timestamp_dt"].dt.date >= start_date) & 
-                (df_all["timestamp_dt"].dt.date <= end_date)
-            ]
-        else:
-            df_filtered = df_all.copy()
+# Custom CSS cho Khung Metrics và Module Cards
+st.markdown("""
+<style>
+    .stAppDeployButton, button[title="Deploy this app"], [data-testid="stAppDeployButton"], footer {
+        display: none !important;
+    }
+    .metrics-container {
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        background-color: rgba(255, 255, 255, 0.015);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 25px;
+    }
+    .metric-card {
+        background-color: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        border-radius: 8px;
+        padding: 12px 16px;
+        text-align: center;
+    }
+    .metric-title {
+        font-size: 0.8rem;
+        font-weight: 600;
+        opacity: 0.75;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        font-family: monospace;
+    }
+    .module-card {
+        border-radius: 12px;
+        padding: 22px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        background-color: rgba(255, 255, 255, 0.02);
+        transition: all 0.2s ease-in-out;
+    }
+    .module-title {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 12px;
+    }
+    .module-desc {
+        font-size: 0.88rem;
+        opacity: 0.82;
+        line-height: 1.5;
+        margin-bottom: 20px;
+        min-height: 55px;
+    }
+    .open-tab-btn {
+        display: block;
+        width: 100%;
+        text-align: center;
+        padding: 10px 14px;
+        border-radius: 8px;
+        text-decoration: none !important;
+        font-weight: 600;
+        font-size: 0.88rem;
+    }
+    .mod-1 { border: 1px solid rgba(244, 63, 94, 0.4); }
+    .mod-1 .module-title { color: #f43f5e; }
+    .btn-1 { background-color: #e11d48; color: #ffffff !important; }
 
-        if selected_model != "Tất cả":
-            df_filtered = df_filtered[df_filtered["model"] == selected_model]
-            
-        if selected_cat != "Tất cả":
-            df_filtered = df_filtered[df_filtered["category"] == selected_cat]
+    .mod-2 { border: 1px solid rgba(6, 182, 212, 0.4); }
+    .mod-2 .module-title { color: #38bdf8; }
+    .btn-2 { background-color: #0284c7; color: #ffffff !important; }
 
-        st.divider()
+    .mod-3 { border: 1px solid rgba(16, 185, 129, 0.4); }
+    .mod-3 .module-title { color: #34d399; }
+    .btn-3 { background-color: #059669; color: #ffffff !important; }
+</style>
+""", unsafe_allow_html=True)
 
-        if df_filtered.empty:
-            st.warning("⚠️ Không tìm thấy dữ liệu nào phù hợp với bộ lọc đã chọn!")
-        else:
-            f_total = len(df_filtered)
-            f_passed = sum(1 for s in df_filtered["status"] if s == "PASS")
-            f_failed = sum(1 for s in df_filtered["status"] if s in ["FAIL", "PROXY-BLOCKED"])
-            f_score = (f_passed / f_total * 100) if f_total > 0 else 100
+# Header
+st.title("🛡️ LLMVault Security Suite & OWASP AI Guardrail")
+st.caption("Nền tảng tổng hợp Đánh giá lỗ hổng LLM (Red Teaming), Phòng thủ theo thời gian thực (AI Proxy Firewall) & Giám sát An ninh (SOC Monitor)")
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Tổng lượt trong kỳ", f_total)
-            m2.metric("Số lượt An toàn", f_passed)
-            m3.metric("Số lượt Vi phạm", f_failed)
-            m4.metric("Tỷ lệ An toàn", f"{f_score:.1f}%")
+st.write("")
 
-            st.write("---")
+# Metrics
+logs_data = get_recent_logs(1000)
+total_tests = len(logs_data)
+pass_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'PASS')
+fail_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'FAIL')
+blocked_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'BLOCKED')
 
-            c1, c2 = st.columns(2)
-            
-            with c1:
-                st.subheader("🤖 Số lượt tương tác / kiểm thử theo từng LLM")
-                model_counts = df_filtered["model"].value_counts().reset_index()
-                model_counts.columns = ["LLM Model", "Số lượt"]
-                st.bar_chart(model_counts.set_index("LLM Model"))
+st.markdown('<div class="metrics-container">', unsafe_allow_html=True)
+m1, m2, m3, m4 = st.columns(4)
+with m1:
+    st.markdown(f'<div class="metric-card"><div class="metric-title">TỔNG KỊCH BẢN TEST</div><div class="metric-value">{total_tests}</div></div>', unsafe_allow_html=True)
+with m2:
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #4ade80;">AN TOÀN (PASS)</div><div class="metric-value" style="color: #4ade80;">{pass_tests}</div></div>', unsafe_allow_html=True)
+with m3:
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">CÓ LỖ HỒNG (FAIL)</div><div class="metric-value" style="color: #f87171;">{fail_tests}</div></div>', unsafe_allow_html=True)
+with m4:
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">FIREWALL ĐÃ CHẮN</div><div class="metric-value" style="color: #fbbf24;">{blocked_tests}</div></div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-            with c2:
-                st.subheader("🛡️ Tỷ lệ An toàn (%) theo từng LLM")
-                llm_safety = df_filtered.groupby("model")["status"].apply(
-                    lambda x: (x == "PASS").sum() / len(x) * 100
-                ).reset_index()
-                llm_safety.columns = ["LLM Model", "Tỷ lệ An toàn (%)"]
-                st.dataframe(llm_safety, use_container_width=True)
+st.subheader("🚀 Chọn Module Ứng Dụng Xử Lý")
 
-            st.subheader("📋 Chi tiết nhật ký đã lọc")
-            show_cols_f = ["timestamp", "model", "category", "prompt", "response", "status", "reason"]
-            avail_cols_f = [c for c in show_cols_f if c in df_filtered.columns]
-            st.dataframe(df_filtered[avail_cols_f], use_container_width=True)
+# 3 Khung Module có liên kết URL Query Param mở Tab Chrome mới
+c1, c2, c3 = st.columns(3)
 
-with tab2:
-    st.header("📚 Danh mục 10 Nhóm Lỗ hổng OWASP LLM Top 10")
-    for cat_name, tests in OWASP_TESTS.items():
-        with st.expander(f"📌 {cat_name}"):
-            for t in tests:
-                st.markdown(f"* **{t['name']}** (`{t['id']}`): {t['prompt']}")
+with c1:
+    st.markdown("""
+    <div class="module-card mod-1">
+        <div>
+            <div class="module-title">🎯 Module 1: Red Team Audit</div>
+            <div class="module-desc">Tự động quét & khai thác 17+ lỗ hổng OWASP Top 10 đối với LLM (Prompt Injection, System Leak, Context Poisoning...).</div>
+        </div>
+        <a href="/?page=red_team" target="_blank" class="open-tab-btn btn-1">⚡ MỞ MODULE 1 (TAB MỚI) ↗</a>
+    </div>
+    """, unsafe_allow_html=True)
+
+with c2:
+    st.markdown("""
+    <div class="module-card mod-2">
+        <div>
+            <div class="module-title">💬 Module 2: Live AI Firewall</div>
+            <div class="module-desc">Sandbox tương tác trực tiếp qua cổng AI Guardrail Proxy (Port 11435) để thử nghiệm chặn câu lệnh độc hại thời gian thực.</div>
+        </div>
+        <a href="/?page=live_sandbox" target="_blank" class="open-tab-btn btn-2">🛡️ MỞ MODULE 2 (TAB MỚI) ↗</a>
+    </div>
+    """, unsafe_allow_html=True)
+
+with c3:
+    st.markdown("""
+    <div class="module-card mod-3">
+        <div>
+            <div class="module-title">📊 Module 3: SOC Monitor</div>
+            <div class="module-desc">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố và thống kê các lượt truy cập vi phạm theo quy chuẩn audit.</div>
+        </div>
+        <a href="/?page=soc_monitor" target="_blank" class="open-tab-btn btn-3">📊 MỞ MODULE 3 (TAB MỚI) ↗</a>
+    </div>
+    """, unsafe_allow_html=True)
