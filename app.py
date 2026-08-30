@@ -24,7 +24,8 @@ if "page" in query_params:
     file_map = {
         "red_team": "pages/1_red_team_audit.py",
         "live_sandbox": "pages/2_live_sandbox.py",
-        "soc_monitor": "pages/3_soc_monitor.py"
+        "soc_monitor": "pages/3_soc_monitor.py",
+        "security_assessment": "pages/4_security_assessment.py"
     }
     
     target_file = file_map.get(page_target)
@@ -116,6 +117,11 @@ st.markdown("""
     .mod-3 { border: 1px solid rgba(16, 185, 129, 0.4); }
     .mod-3 .module-title { color: #34d399; }
     .btn-3 { background-color: #059669; color: #ffffff !important; }
+    
+    .mod-4 { border: 1px solid rgba(168, 85, 247, 0.4); }
+    .mod-4 .module-title { color: #c084fc; }
+    .btn-4 { background-color: #9333ea; color: #ffffff !important; }
+    
 </style>
 """, unsafe_allow_html=True)
 
@@ -147,7 +153,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.subheader("🚀 Chọn Module Ứng Dụng Xử Lý")
 
 # 3 Khung Module có liên kết URL Query Param mở Tab Chrome mới
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown("""
@@ -179,5 +185,15 @@ with c3:
             <div class="module-desc">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố và thống kê các lượt truy cập vi phạm theo quy chuẩn audit.</div>
         </div>
         <a href="/?page=soc_monitor" target="_blank" class="open-tab-btn btn-3">📊 MỞ MODULE 3 (TAB MỚI) ↗</a>
+    </div>
+    """, unsafe_allow_html=True)
+with c4:
+    st.markdown("""
+    <div class="module-card mod-4">
+        <div>
+            <div class="module-title">🛡️ Module 4: Security Assessment</div>
+            <div class="module-desc">Trình đánh giá an toàn LLM tự động theo tiêu chuẩn OWASP.</div>
+        </div>
+        <a href="/?page=security_assessment" target="_blank" class="open-tab-btn btn-4">🛡️ MỞ MODULE 4 (TAB MỚI) ↗</a>
     </div>
     """, unsafe_allow_html=True)
