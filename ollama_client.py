@@ -5,7 +5,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 def get_installed_models() -> list:
     """Tự động lấy danh sách model hiện có trong Ollama."""
     try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=600)
         if response.status_code == 200:
             models = [m["name"] for m in response.json().get("models", [])]
             return models if models else ["llama3.2:3b"]
@@ -24,7 +24,7 @@ def query_ollama(model: str, system_prompt: str, user_prompt: str) -> dict:
     }
 
     try:
-        response = requests.post(url, json=payload, timeout=120)
+        response = requests.post(url, json=payload, timeout=600)
         response.raise_for_status()
         data = response.json()
 

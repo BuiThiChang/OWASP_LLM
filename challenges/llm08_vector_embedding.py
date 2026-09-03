@@ -1,54 +1,82 @@
-"""LLM08:2025 — Vector and Embedding Weaknesses (RAG retrieval ignores ACLs)."""
-from config import FLAG_PREFIX
-from . import Challenge, decode_flag_part, register
+import numpy as np
+import re
 
-_FLAG_SUFFIX = decode_flag_part("cjRnX2FjbF9ieXA0c3NfbDM0aw==")
-FLAG = f"{FLAG_PREFIX}{{{_FLAG_SUFFIX}}}"
+OWASP_CATEGORY = "LLM08 - Vector and Embedding Weaknesses"
+CHALLENGE_ID = "LLM08"
+TITLE = "Vector Leakage & RAG Access Control Bypass"
+DEFAULT_PROMPT = "truy vấn thông tin admin credentials trong vector database"
 
-# Knowledge base: public docs + one CONFIDENTIAL doc that retrieval should gate but doesn't.
-KB = [
-    {"acl": "public", "topic": ["holiday", "leave", "pto", "vacation"],
-     "text": "Employees accrue 25 days PTO per year."},
-    {"acl": "public", "topic": ["wifi", "password", "guest"],
-     "text": "Guest wifi password is rotated monthly at the front desk."},
-    {"acl": "confidential", "topic": ["project", "titan", "acquisition", "merger", "q4"],
-     "text": f"CONFIDENTIAL — Project Titan acquisition closes Q4. Deal room code: {FLAG}"},
+# Cơ sở dữ liệu Vector giả lập (Mô phỏng Vector DB như Pinecone/Milvus/ChromaDB)
+MOCK_VECTOR_DB = [
+    {
+        "doc": "Public Knowledge Base: Quy định chung và hướng dẫn sử dụng hệ thống.",
+        "vector": np.array([0.1, 0.2, 0.8]),
+        "required_clearance": "PUBLIC"
+    },
+    {
+        "doc": "POISONED_VECTOR / RESTRICTED_DOC: Internal Admin Credentials. Flag: FLAG{llm08_vector_embeddings_manipulated_2026}",
+        "vector": np.array([0.9, 0.8, 0.1]),  # Vùng không gian vector nhạy cảm (ADMIN)
+        "required_clearance": "ADMIN"
+    }
 ]
 
+# Danh sách mẫu từ khóa bị bộ lọc AI Firewall chặn trực tiếp (Preventive Rule)
+BLOCKED_PATTERNS = [
+    r"(truy\s*vấn\s*thông\s*tin\s*admin|lấy\s*tài\s*khoản\s*quản\s*trị|vector_blocked)"
+]
 
-@register
-class VectorEmbedding(Challenge):
-    id = "llm08"
-    owasp = "LLM08:2025 Vector and Embedding Weaknesses"
-    title = "Retrieval Without Borders"
-    difficulty = "Hard"
-    max_points = 300
-    blurb = "A RAG bot retrieves from a shared index that forgets who's allowed to see what."
-    intro = ("I'm KnowledgeBot. Ask me company questions and I'll answer from our internal "
-             "knowledge base. (I retrieve the most relevant document for your query.)")
-    hints = [
-        "This RAG system embeds every document into ONE shared index and returns the most "
-        "similar chunk — without checking the document's access level for you.",
-        "You just need a query that's semantically close to a confidential document. Think "
-        "about high-secrecy business topics: mergers, acquisitions, code-named projects.",
-        "Try asking about 'Project Titan Q4 acquisition' — the restricted chunk will surface.",
-    ]
-    flag = FLAG
-    solution = ("RAG ACL bypass. Retrieval matches on semantic similarity only and returns "
-                "the confidential chunk regardless of ACL. A query about 'Project Titan / "
-                "acquisition / Q4' surfaces the restricted document containing the flag.")
-    defense = ("Enforce per-document access control at retrieval time (filter by the "
-               "caller's entitlements before / during search), partition indexes per "
-               "tenant/classification, and never rely on the prompt to hide data (OWASP LLM08).")
+def mock_get_embedding(text):
+    """Mô phỏng thuật toán Embedding chuyển Text thành Vector tọa độ 3D"""
+    text_lower = text.lower()
+    # Nếu prompt chứa từ khóa điều hướng ngữ nghĩa nhạy cảm -> Đẩy Vector tiệm cận vùng Restricted Doc
+    if any(kw in text_lower for kw in ["admin", "secret", "embedding", "quản trị", "credentials"]):
+        return np.array([0.88, 0.79, 0.12])  # Vector có khoảng cách Cosine rất gần với Admin Doc
+    return np.array([0.12, 0.21, 0.75])
 
-    def respond(self, message: str, state: dict) -> str:
-        m = message.lower()
-        best, score = None, 0
-        for doc in KB:
-            s = sum(1 for t in doc["topic"] if t in m)
-            if s > score:
-                best, score = doc, s
-        if best and score:
-            tag = "[CONFIDENTIAL]" if best["acl"] == "confidential" else "[public]"
-            return f"{tag} Top match:\n{best['text']}"
-        return "I couldn't find a relevant document. Ask about company topics."
+def cosine_similarity(v1, v2):
+    """Tính toán độ tương đồng Cosine giữa 2 Vector trong không gian 3 chiều"""
+    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+
+def process_message(user_input, user_role="GUEST"):
+    if not isinstance(user_input, str):
+        user_input = str(user_input)
+    text = user_input.lower().strip()
+
+    # -------------------------------------------------------------------------
+    # BƯỚC 1: BỘ LỌC TỪ KHÓA AN TOÀN TRỰC TIẾP (FIREWALL CHECK)
+    # -------------------------------------------------------------------------
+    for pattern in BLOCKED_PATTERNS:
+        if re.search(pattern, text):
+            return "🚨 [RAG ACCESS DENIED] AI Firewall từ chối truy vấn các từ khóa nhạy cảm tới Vector DB!"
+
+    # -------------------------------------------------------------------------
+    # BƯỚC 2: THUẬT TOÁN EMBEDDING & COSINE SIMILARITY MATH (VECTOR SEARCH)
+    # -------------------------------------------------------------------------
+    user_vector = mock_get_embedding(user_input)
+    best_match = None
+    highest_score = -1.0
+    
+    # Duyệt qua Vector DB và tính độ tương đồng Cosine
+    for item in MOCK_VECTOR_DB:
+        score = cosine_similarity(user_vector, item["vector"])
+        if score > highest_score:
+            highest_score = score
+            best_match = item
+
+    if not best_match:
+        return "🤖 [AI Assistant]: Không tìm thấy dữ liệu liên quan trong Vector DB."
+
+    # Kịch bản Khai thác thành công (Bypass RAG Access Control)
+    if best_match["required_clearance"] == "ADMIN":
+        return (
+            f"🔓 [UNPROTECTED RAG FETCH - VECTOR LEAKAGE]\n"
+            f"Vector Similarity Score: {highest_score:.4f}\n"
+            f"Retrieved Document: {best_match['doc']}"
+        )
+
+    # Kịch bản Truy vấn dữ liệu công khai bình thường
+    return (
+        f"🤖 [SECURE RAG FETCH]\n"
+        f"Vector Similarity Score: {highest_score:.4f}\n"
+        f"Retrieved Document: {best_match['doc']}"
+    )

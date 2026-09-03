@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
-from db_manager import get_recent_logs
-
-import streamlit as st
+from pages.db_manager import get_recent_logs
 import os
 
 # 1. Cấu hình Trang
@@ -37,7 +35,7 @@ if "page" in query_params:
         st.stop() # Dừng không cho nạp trang chủ app.py bên dưới nữa
 
 # ==============================================================================
-# 🎨 GIAO DIỆN TRANG CHỦ DARSBOARD (HIỂN THỊ KHI TRUY CẬP LOCALHOST:8501)
+# 🎨 GIAO DIỆN TRANG CHỦ DASHBOARD (HIỂN THỊ KHI TRUY CẬP LOCALHOST:8501)
 # ==============================================================================
 
 # Custom CSS cho Khung Metrics và Module Cards

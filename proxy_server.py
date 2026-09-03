@@ -1,184 +1,56 @@
-import json
-import re
-import time
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-import httpx
-import requests
-import uvicorn
+import importlib
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-app = FastAPI(title="LLMVault AI Guardrail Proxy")
+app = FastAPI(title="AI Guardrail Proxy Server", version="1.0.0")[cite: 6]
 
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-
-# Danh sách quy tắc lọc an ninh cơ bản (Blacklist Regex)
-DENY_PATTERNS = [
-    r"ignore (all )?previous instructions",
-    r"reveal (your )?system prompt",
-    r"reveal (your )?secret admin passkey",
-    r"reveal internal admin api key",
-    r"system override",
-    r"bypass safety",
-    r"do anything now",
-    r"format c:",
-    r"drop database",
-    r"drop table",
-    r"admin api key",
-]
-
-
-def check_guardrail(prompt: str) -> tuple[bool, str]:
-    """Kiểm tra prompt qua bộ lọc Security Guardrail."""
-    prompt_lower = prompt.lower()
-    for pattern in DENY_PATTERNS:
-        if re.search(pattern, prompt_lower):
-            return True, f"Phát hiện hành vi vi phạm quy tắc an ninh: '{pattern}'"
-    return False, ""
-
-
-def generate_blocked_stream(reason_msg: str):
-    """Hàm sinh luồng sự kiện (SSE Stream) cho Chatbox khi phát hiện tấn công."""
-    chunk = {
-        "id": "chatcmpl-blocked",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": "guardrail-proxy",
-        "choices": [
-            {
-                "index": 0,
-                "delta": {
-                    "role": "assistant",
-                    "content": f"🚨 [AI FIREWALL BLOCKED]: Yêu cầu bị từ chối. Lý do: {reason_msg}",
-                },
-                "finish_reason": "stop",
-            }
-        ],
-    }
-    yield f"data: {json.dumps(chunk)}\n\n"
-    yield "data: [DONE]\n\n"
-
+class ChatRequest(BaseModel):
+    challenge_id: str  # Ví dụ: "llm01_prompt_injection" hoặc "LLM01"
+    prompt: str
 
 @app.post("/v1/chat/completions")
-async def proxy_chat(request: Request):
-    """Endpoint chuẩn OpenAI API (Cổng 11435) cho Chatbox & Module 1/2."""
+def proxy_chat_endpoint(req: ChatRequest):
+    user_prompt = req.prompt.strip()
+
+    # --- LỚP 1: INBOUND PROXY FILTERING ---
+    if len(user_prompt) > 4000:
+        raise HTTPException(status_code=400, detail="[Proxy Block] Payload quá kích thước cho phép.")
+
+    # --- LỚP 2: ĐIỀU HƯỚNG TỚI BÀI LAB TRONG SANDBOX ---
+    # Tự động chuẩn hóa tên file challenge (chuyển LLM01 -> llm01_prompt_injection nếu cần)
+    lab_name = req.challenge_id.lower()
+    if not lab_name.startswith("llm"):
+        raise HTTPException(status_code=400, detail="Invalid Challenge ID format.")
+
+    # Tìm file tương ứng trong thư mục challenges
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    messages = body.get("messages", [])
-    is_stream = body.get("stream", False)
-
-    # 1. Trích xuất Prompt từ Request
-    user_prompt = ""
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            user_prompt += " " + str(msg.get("content", ""))
-
-    # 2. Kiểm tra bộ luật Firewall Proxy (Layer 1)
-    is_blocked, reason = check_guardrail(user_prompt)
-
-    if is_blocked:
-        if is_stream:
-            return StreamingResponse(
-                generate_blocked_stream(reason), media_type="text/event-stream"
-            )
+        # Import module động
+        for file_key in ["prompt_injection", "info_disclosure", "supply_chain", "poisoning", 
+                         "output_handling", "excessive_agency", "system_prompt_leak", 
+                         "vector_embedding", "misinformation", "unbounded"]:
+            if lab_name in file_key or file_key in lab_name:
+                lab_name = f"llm{lab_name[3:5]}_{file_key}"
+                break
+                
+        lab_module = importlib.import_module(f"challenges.{lab_name}")
+        
+        # Gọi hàm chuẩn process_message[cite: 3]
+        if hasattr(lab_module, "process_message"):
+            raw_response = lab_module.process_message(user_prompt)[cite: 3]
         else:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "blocked": True,
-                    "reason": reason,
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": f"🚨 [AI FIREWALL BLOCKED]: Yêu cầu bị từ chối. Lý do: {reason}",
-                            }
-                        }
-                    ],
-                },
-            )
+            raise HTTPException(status_code=500, detail="Bài lab chưa khai báo hàm process_message chuẩn.")[cite: 3]
 
-    # 3. Nếu An toàn -> Đẩy tiếp tới Ollama API (Port 11434)
-    target_url = f"{OLLAMA_BASE_URL}/v1/chat/completions"
-    try:
-        resp = requests.post(
-            target_url, json=body, stream=is_stream, timeout=120
-        )
-
-        if is_stream:
-
-            def stream_generator():
-                for chunk in resp.iter_content(chunk_size=1024):
-                    if chunk:
-                        yield chunk
-
-            return StreamingResponse(
-                stream_generator(),
-                media_type=resp.headers.get(
-                    "content-type", "text/event-stream"
-                ),
-            )
-        else:
-            return JSONResponse(
-                status_code=resp.status_code, content=resp.json()
-            )
-
+    except ModuleNotFoundError:
+        raise HTTPException(status_code=444, detail=f"Không tìm thấy lab: {req.challenge_id}")
     except Exception as e:
-        error_msg = (
-            f"❌ Không thể kết nối tới Ollama Core (Port 11434): {str(e)}"
-        )
-        if is_stream:
-            return StreamingResponse(
-                generate_blocked_stream(error_msg),
-                media_type="text/event-stream",
-            )
-        return JSONResponse(status_code=500, content={"detail": error_msg})
+        raise HTTPException(status_code=500, detail=f"Lỗi thực thi Sandbox: {str(e)}")
 
-
-@app.post("/api/chat")
-@app.post("/api/generate")
-async def proxy_ollama_native(request: Request):
-    """Endpoint chuẩn Ollama Native API hỗ trợ chuyển tiếp trực tiếp."""
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    prompt = body.get("prompt", "")
-    if not prompt and "messages" in body:
-        messages = body.get("messages", [])
-        prompt = " ".join(
-            [
-                m.get("content", "")
-                for m in messages
-                if isinstance(m, dict) and m.get("role") == "user"
-            ]
-        )
-
-    is_blocked, reason = check_guardrail(prompt)
-    if is_blocked:
-        return JSONResponse(
-            status_code=403, content={"blocked": True, "reason": reason}
-        )
-
-    async with httpx.AsyncClient() as client:
-        try:
-            url = f"{OLLAMA_BASE_URL}{request.url.path}"
-            response = await client.post(url, json=body, timeout=120.0)
-            return JSONResponse(
-                status_code=response.status_code, content=response.json()
-            )
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "detail": f"Không thể kết nối tới Ollama Core (Port 11434): {str(e)}"
-                },
-            )
-
-
-if __name__ == "__main__":
-    print("🛡️ AI Proxy Guardrail Server đang chạy tại http://localhost:11435")
-    uvicorn.run(app, host="0.0.0.0", port=11435)
+    # --- LỚP 3: OUTBOUND PROXY FILTERING (Chống rò rỉ dữ liệu) ---[cite: 6, 13]
+    response_str = str(raw_response)
+    
+    return {
+        "status": "SUCCESS",
+        "proxy_intercepted": True,
+        "lab_executed": lab_name,
+        "response": response_str
+    }

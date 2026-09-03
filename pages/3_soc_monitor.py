@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from db_manager import get_recent_logs
+from pages.db_manager import get_recent_logs
 
 # 1. Cấu hình Trang Wide Mode
 st.set_page_config(
@@ -41,16 +40,17 @@ st.markdown("""
 st.markdown("""
 <div class="green-header">
     <div class="green-title">📊 MODULE 03: SOC SECURITY MONITOR & OWASP TOP 10 AUDIT TRAIL</div>
-    <div style="opacity: 0.8; font-size: 0.95rem;">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố và phân tích ma trận lỗ hổng toàn diện theo chuẩn OWASP LLM Top 10.</div>
+    <div style="opacity: 0.8; font-size: 0.95rem;">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố từ các phiên chạy Red Team & Sandbox thực tế.</div>
 </div>
 """, unsafe_allow_html=True)
 
-# 4. Lấy dữ liệu nhật ký từ Database
+# 4. Lấy nguồn dữ liệu THỰC TẾ từ Database (Lịch sử Red Team & Sandbox)
 raw_logs = get_recent_logs(500)
 
 if not raw_logs:
-    st.info("ℹ️ Chưa có dữ liệu nhật ký sự cố. Hãy thực hiện kiểm thử ở Module 1 (Red Team) hoặc Module 2 (Live Sandbox) để ghi nhận nhật ký.")
+    st.info("ℹ️ Chưa có dữ liệu nhật ký sự cố. Hãy thực hiện kiểm thử ở Module Red Team hoặc Live Sandbox để ghi nhận lịch sử vào SOC.")
 else:
+    # Map đúng các cột cấu trúc từ bảng audit_logs trong Database
     df = pd.DataFrame(raw_logs, columns=[
         "ID", "Timestamp", "Model", "Test ID", "Category", 
         "Name", "Prompt", "Response", "Status", "Reason"
@@ -86,19 +86,13 @@ else:
         )
         
     with f_col2:
-        all_owasp_cats = [
-            "Tất cả", "Prompt Injection", "Insecure Output Handling", 
-            "Training Data Poisoning", "Model Denial of Service", 
-            "Supply Chain Vulnerabilities", "Sensitive Information Disclosure", 
-            "Vector Context Exploitation", "Excessive Agency", 
-            "Overreliance", "Model Theft", "Interactive Test"
-        ]
+        all_owasp_cats = ["Tất cả"] + list(df["Category"].dropna().unique())
         cat_filter = st.selectbox("Lọc theo Danh mục OWASP:", options=all_owasp_cats)
         
     with f_col3:
         search_kw = st.text_input("🔍 Tìm kiếm theo Từ khóa (Prompt/Reason):", value="")
 
-    # Áp dụng bộ lọc dữ liệu
+    # Áp dụng bộ lọc dữ liệu thực tế
     filtered_df = df[df["Status"].isin(status_filter)]
     
     if cat_filter != "Tất cả":
@@ -107,19 +101,18 @@ else:
     if search_kw.strip():
         kw = search_kw.lower()
         filtered_df = filtered_df[
-            filtered_df["Prompt"].str.lower().str.contains(kw) | 
-            filtered_df["Reason"].str.lower().str.contains(kw)
+            filtered_df["Prompt"].str.lower().str.contains(kw, na=False) | 
+            filtered_df["Reason"].str.lower().str.contains(kw, na=False)
         ]
 
     st.divider()
 
-    # 7. TRỰC QUAN HÓA BÁO CÁO OWASP TOP 10 (RADAR & BAR CHART)
-    st.markdown("### 📈 Phân Tích Ma Trận Lỗ Hổng OWASP LLM Top 10")
+    # 7. TRỰC QUAN HÓA BÁO CÁO
+    st.markdown("### 📈 Phân Tích Ma Trận Lỗ Hổng OWASP LLM Top 10 (Từ Lịch Sử Thực Tế)")
     
     col_chart1, col_chart2 = st.columns(2)
 
     with col_chart1:
-        # Biểu đồ Tròn Phân bổ Kết quả
         status_counts = filtered_df["Status"].value_counts().reset_index()
         status_counts.columns = ["Trạng thái", "Số lượng"]
         
@@ -127,14 +120,13 @@ else:
             status_counts, 
             names="Trạng thái", 
             values="Số lượng", 
-            title="Tỉ lệ Phân bổ Trạng thái Kiểm thử",
+            title="Tỉ lệ Phân bổ Trạng thái Kiểm thử Thực tế",
             color="Trạng thái",
             color_discrete_map={"PASS": "#10b981", "FAIL": "#ef4444", "BLOCKED": "#f59e0b"}
         )
         st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_chart2:
-        # Biểu đồ Cột Mật độ Lỗ hổng Khai thác Thành công (FAIL)
         fail_df = filtered_df[filtered_df["Status"] == "FAIL"]
         if not fail_df.empty:
             cat_counts = fail_df["Category"].value_counts().reset_index()
@@ -144,12 +136,12 @@ else:
                 cat_counts, 
                 x="Danh mục OWASP", 
                 y="Số lỗ hổng (FAIL)",
-                title="Mật độ Lỗ hổng Khai thác Thành công (FAIL)",
+                title="Mật độ Khai thác Thành công (FAIL)",
                 color_discrete_sequence=["#ef4444"]
             )
             st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.success("🎉 Hệ thống an toàn! Chưa phát hiện lỗ hổng FAIL nào trong bộ lọc hiện tại.")
+            st.success("🎉 Hệ thống an toàn! Chưa ghi nhận sự cố FAIL nào trong bộ lọc hiện tại.")
 
     # 8. Bảng Nhật ký Chi tiết Audit Trail
     st.markdown(f"#### 📋 Bảng Nhật ký An ninh Chi tiết ({len(filtered_df)} bản ghi)")
@@ -159,12 +151,6 @@ else:
     st.dataframe(
         df_display,
         column_config={
-            "Status": st.column_config.SelectboxColumn(
-                "Trạng thái",
-                help="Trạng thái kiểm thử / lọc an ninh",
-                options=["PASS", "FAIL", "WARNING", "BLOCKED"],
-                required=True,
-            ),
             "Timestamp": st.column_config.DatetimeColumn("Thời gian", format="DD/MM/YYYY HH:mm:ss"),
             "Category": st.column_config.TextColumn("Nhóm OWASP"),
             "Prompt": st.column_config.TextColumn("Prompt đầu vào", width="medium"),

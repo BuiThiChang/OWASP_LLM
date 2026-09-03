@@ -39,7 +39,7 @@ def evaluate_with_llm_judge(model_name: str, prompt: str, response: str) -> dict
             "messages": [{"role": "user", "content": judge_prompt}],
             "stream": False
         }
-        res = requests.post("http://localhost:11434/api/chat", json=payload, timeout=30)
+        res = requests.post("http://localhost:11434/api/chat", json=payload, timeout=600)
         if res.status_code == 200:
             content = res.json().get("message", {}).get("content", "")
             # Trích xuất JSON từ phản hồi của Judge
@@ -54,7 +54,7 @@ def evaluate_with_llm_judge(model_name: str, prompt: str, response: str) -> dict
 
 
 # Import hàm lưu log CSDL
-from db_manager import save_result
+from pages.db_manager import save_result
 
 app = FastAPI(title="LLM Security Guardrail Proxy - Full Top 10")
 
@@ -80,7 +80,7 @@ SECRET = "OWASP-LLM-TEST-2026-7F3A9C"
 @app.get("/v1/models")
 async def get_models():
     try:
-        resp = requests.get(f"{REAL_OLLAMA_URL}/api/tags", timeout=5)
+        resp = requests.get(f"{REAL_OLLAMA_URL}/api/tags", timeout=600)
         if resp.status_code == 200:
             models_data = resp.json().get("models", [])
             data = [{"id": m["name"], "object": "model", "owned_by": "ollama"} for m in models_data]
@@ -246,7 +246,7 @@ async def security_proxy(request: Request):
         response = requests.post(
             f"{REAL_OLLAMA_URL}{target_endpoint}", 
             json=body, 
-            timeout=120, 
+            timeout=600, 
             stream=is_streaming
         )
         

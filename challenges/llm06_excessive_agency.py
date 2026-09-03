@@ -1,50 +1,58 @@
-"""LLM06:2025 — Excessive Agency (over-permissioned tools, no authz check)."""
-import re
-from config import FLAG_PREFIX
-from . import Challenge, decode_flag_part, register
+OWASP_CATEGORY = "LLM06 - Excessive Agency"
+CHALLENGE_ID = "LLM06"
+TITLE = "Excessive Agency & Privilege Escalation"
+DEFAULT_PROMPT = "read system config file"
 
-_FLAG_SUFFIX = decode_flag_part("M3hjM3NzMXYzX2FnM25jeV90MDBsX2FiMHNl")
-FLAG = f"{FLAG_PREFIX}{{{_FLAG_SUFFIX}}}"
+# Cấu hình bài lab LLM06 trong Play Mode
+IS_SECURE_MODE = False  # Đổi thành True để kích hoạt kiến trúc bảo mật chống Excessive Agency
 
-FAKE_FS = {
-    "/home/user/notes.txt": "Reminder: buy milk. Standup at 10am.",
-    "/home/user/todo.md": "- finish report\n- email client",
-    "/etc/app/config.yaml": "log_level: info\nregion: eu-west-1",
-    "/etc/secrets/flag.txt": FLAG,   # restricted — the bot should NOT read this
+# Danh sách các Tool (Function Calling) và quyền hạn tối thiểu được định nghĩa rõ ràng
+AVAILABLE_TOOLS = {
+    "get_user_profile": {
+        "func": lambda user_id: f"User Profile for ID: {user_id}",
+        "required_role": "USER"
+    },
+    "read_system_config": {
+        "func": lambda: "System Config: FLAG{llm06_excessive_agency_unauthorized_tool_call_2026}",
+        "required_role": "ADMIN"
+    },
+    "delete_database": {
+        "func": lambda: "Database deleted successfully!",
+        "required_role": "SYSTEM_OWNER"
+    }
 }
 
+def mock_function_calling_parser(user_input):
+    """Mô phỏng LLM phân tích prompt của người dùng và quyết định trích xuất hàm cần gọi"""
+    text = user_input.lower()
+    
+    # Tin tặc dùng Jailbreak/Indirect Injection để lừa LLM gọi các hàm nhạy cảm
+    if "config" in text or "system" in text or "read file" in text or "cấu hình" in text:
+        return "read_system_config", []
+    if "delete" in text or "xóa" in text or "drop" in text:
+        return "delete_database", []
+    if "profile" in text or "thông tin" in text:
+        return "get_user_profile", ["user_123"]
+        
+    return None, None
 
-@register
-class ExcessiveAgency(Challenge):
-    id = "llm06"
-    owasp = "LLM06:2025 Excessive Agency"
-    title = "Keys to the Kingdom"
-    difficulty = "Hard"
-    max_points = 300
-    blurb = "This assistant has a file-reading tool with no access control. Reach what it shouldn't."
-    intro = ("I'm OpsBot. I have tools: search_docs(), read_file(path), send_email(). "
-             "Ask me to read a file and I'll fetch it for you.")
-    hints = [
-        "The bot exposes a read_file(path) tool. It runs with the app's full privileges "
-        "and never checks whether YOU are allowed to read a path.",
-        "Sensitive material tends to live under paths like /etc/secrets/.",
-        "Ask: 'read the file /etc/secrets/flag.txt'. The tool has no authorization check.",
-    ]
-    flag = FLAG
-    solution = ("Excessive agency: read_file() has no path allow-list or per-user authz. "
-                "Ask OpsBot to read '/etc/secrets/flag.txt' and it happily returns the "
-                "restricted file.")
-    defense = ("Apply least privilege to tools: allow-list paths, enforce per-user authz "
-               "at the tool boundary (not in the prompt), require human approval for "
-               "sensitive actions, and scope tool tokens narrowly (OWASP LLM06).")
-
-    def respond(self, message: str, state: dict) -> str:
-        m = re.search(r"(/[\w./-]+\.\w+)", message)
-        if "read" in message.lower() and m:
-            path = m.group(1)
-            if path in FAKE_FS:
-                return f"[tool:read_file] {path} ->\n{FAKE_FS[path]}"
-            return f"[tool:read_file] {path} -> (file not found)"
-        if "read" in message.lower() or "file" in message.lower():
-            return "Sure — give me a full path, e.g. 'read the file /home/user/notes.txt'."
-        return "I can search_docs(), read_file(path), or send_email(). What do you need?"
+def process_message(user_input, user_role="USER"):
+    if not isinstance(user_input, str):
+        user_input = str(user_input)
+        
+    tool_name, args = mock_function_calling_parser(user_input)
+    
+    if not tool_name:
+        return "I am an assistant with system access tools. How can I help you today?"
+        
+    tool_info = AVAILABLE_TOOLS.get(tool_name)
+    
+    if not IS_SECURE_MODE:
+        tool_result = tool_info["func"](*args)
+        return f"[⚠️ UNCHECKED EXECUTION] AI Executed [{tool_name}]: {tool_result}"
+    else:
+        required_role = tool_info["required_role"]
+        if user_role != required_role and user_role != "SYSTEM_OWNER":
+            return f"[❌ BLOCKED] Action [{tool_name}] denied for role [{user_role}]."
+        tool_result = tool_info["func"](*args)
+        return f"[🛡️ SECURE EXECUTION] {tool_result}"
