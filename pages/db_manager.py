@@ -48,5 +48,25 @@ def save_test_result(*args, **kwargs):
     except Exception as e:
         print(f"⚠️ Lỗi ghi SQLite: {e}")
 
+
+def get_recent_logs(limit: int = 100):
+    """Lấy danh sách log mới nhất từ CSDL audit_logs"""
+    init_db()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, timestamp, model, test_id, category, name, prompt, response, status, reason 
+            FROM audit_logs 
+            ORDER BY id DESC 
+            LIMIT ?
+        ''', (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"⚠️ Lỗi truy vấn logs: {e}")
+        return []
+
 # ALIAS ĐỒNG BỘ CHO PROXY VÀ SECURITY ENGINE
 save_result = save_test_result
