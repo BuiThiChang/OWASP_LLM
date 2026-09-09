@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from pages.db_manager import get_recent_logs
+from db_manager import get_recent_logs
 
 # 1. Cấu hình Trang Wide Mode
 st.set_page_config(

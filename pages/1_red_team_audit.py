@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import importlib
-from pages.db_manager import log_audit_event  # Gọi hàm lưu log vào CSDL
+from db_manager import log_audit_event  # Gọi hàm lưu log vào CSDL
 
 import sys
 import os

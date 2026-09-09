@@ -1,18 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-import sys
-import importlib.util
-
-# Nạp động module pages/db_manager.py tránh xung đột Streamlit Page Cache
-db_path = os.path.join(os.path.dirname(__file__), "pages", "db_manager.py")
-spec = importlib.util.spec_from_file_location("pages_db_manager", db_path)
-db_manager = importlib.util.module_from_spec(spec)
-sys.modules["pages_db_manager"] = db_manager
-spec.loader.exec_module(db_manager)
-
-# Lấy hàm get_recent_logs
-get_recent_logs = db_manager.get_recent_logs
+from db_manager import get_recent_logs  # Import trực tiếp từ file db_manager.py ở thư mục gốc
 
 # 1. Cấu hình Trang
 st.set_page_config(

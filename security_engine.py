@@ -3,10 +3,10 @@ import requests
 
 # 1. IMPORT CSDL CHUẨN TỪ PAGES.DB_MANAGER
 try:
-    from pages.db_manager import save_result
+    from db_manager import save_result
 except ImportError:
     try:
-        from pages.db_manager import save_test_result as save_result
+        from db_manager import save_test_result as save_result
     except ImportError:
         def save_result(*args, **kwargs): pass
 

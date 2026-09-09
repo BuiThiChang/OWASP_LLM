@@ -9,10 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import hàm kiểm thử từ security_engine và CSDL từ pages.db_manager
 from security_engine import evaluate_owasp_top_10
-try:
-    from pages.db_manager import save_result
-except ImportError:
-    def save_result(*args, **kwargs): pass
+
 
 app = FastAPI(title="LLM Security Guardrail Proxy")
 

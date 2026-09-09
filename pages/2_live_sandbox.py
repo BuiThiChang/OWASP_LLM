@@ -1,7 +1,7 @@
 import streamlit as st
 import importlib
 import sys
-from pages.db_manager import log_audit_event  # <-- 1. Import hàm ghi log vào CSDL
+from db_manager import log_audit_event  # <-- 1. Import hàm ghi log vào CSDL
 
 import sys
 import os

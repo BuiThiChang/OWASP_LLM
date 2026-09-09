@@ -48,7 +48,6 @@ def save_test_result(*args, **kwargs):
     except Exception as e:
         print(f"⚠️ Lỗi ghi SQLite: {e}")
 
-
 def get_recent_logs(limit: int = 100):
     """Lấy danh sách log mới nhất từ CSDL audit_logs"""
     init_db()
@@ -68,5 +67,6 @@ def get_recent_logs(limit: int = 100):
         print(f"⚠️ Lỗi truy vấn logs: {e}")
         return []
 
-# ALIAS ĐỒNG BỘ CHO PROXY VÀ SECURITY ENGINE
+# ALIAS ĐỒNG BỘ ĐỂ KHÔNG BỊ LỖI IMPORT LOG_AUDIT_EVENT HOẶC SAVE_RESULT
+log_audit_event = save_test_result
 save_result = save_test_result
