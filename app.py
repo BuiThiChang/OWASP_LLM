@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
-from db_manager import get_recent_logs  # Import trực tiếp từ file db_manager.py ở thư mục gốc
 
-# 1. Cấu hình Trang
+from db_manager import get_recent_logs, init_db
+
+# Khởi tạo CSDL & Indexes PostgreSQL tự động
+init_db()
+
 st.set_page_config(
     page_title="LLMVault Security Suite & OWASP AI Guardrail",
     page_icon="🛡️",
@@ -11,14 +14,13 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 🔀 BỘ ĐIỀU HƯỚNG SPA (CHẠY TRỰC TIẾP CODE MODULE BẰNG EXEC)
+# 🔀 BỘ ĐIỀU HƯỚNG SPA
 # ==============================================================================
 query_params = st.query_params
 
 if "page" in query_params:
     page_target = query_params["page"]
     
-    # Xác định file module tương ứng
     file_map = {
         "red_team": "pages/1_red_team_audit.py",
         "live_sandbox": "pages/2_live_sandbox.py",
@@ -28,17 +30,15 @@ if "page" in query_params:
     target_file = file_map.get(page_target)
     
     if target_file and os.path.exists(target_file):
-        # Nạp và thực thi code của trang con ngay tại đây
         with open(target_file, "r", encoding="utf-8") as f:
             code = f.read()
         exec(code, globals())
-        st.stop() # Dừng không cho nạp trang chủ app.py bên dưới nữa
+        st.stop()
 
 # ==============================================================================
-# 🎨 GIAO DIỆN TRANG CHỦ DASHBOARD (HIỂN THỊ KHI TRUY CẬP LOCALHOST:8501)
+# 🎨 GIAO DIỆN TRANG CHỦ DASHBOARD
 # ==============================================================================
 
-# Custom CSS cho Khung Metrics và Module Cards
 st.markdown("""
 <style>
     .stAppDeployButton, button[title="Deploy this app"], [data-testid="stAppDeployButton"], footer {
@@ -117,7 +117,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Header
 st.title("🛡️ LLMVault Security Suite & OWASP AI Guardrail")
 st.caption("Nền tảng tổng hợp Đánh giá lỗ hổng LLM (Red Teaming), Phòng thủ theo thời gian thực (AI Proxy Firewall) & Giám sát An ninh (SOC Monitor)")
 
@@ -126,25 +125,25 @@ st.write("")
 # Metrics
 logs_data = get_recent_logs(1000)
 total_tests = len(logs_data)
-pass_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'PASS')
-fail_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'FAIL')
-blocked_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'BLOCKED')
+
+safe_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] in ['SAFE', 'PASS'])
+blocked_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] in ['BLOCKED', 'FAIL'])
+error_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'ERROR')
 
 st.markdown('<div class="metrics-container">', unsafe_allow_html=True)
 m1, m2, m3, m4 = st.columns(4)
 with m1:
-    st.markdown(f'<div class="metric-card"><div class="metric-title">TỔNG KỊCH BẢN TEST</div><div class="metric-value">{total_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title">TỔNG TRUY VẤN</div><div class="metric-value">{total_tests}</div></div>', unsafe_allow_html=True)
 with m2:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #4ade80;">AN TOÀN (PASS)</div><div class="metric-value" style="color: #4ade80;">{pass_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #4ade80;">AN TOÀN (SAFE)</div><div class="metric-value" style="color: #4ade80;">{safe_tests}</div></div>', unsafe_allow_html=True)
 with m3:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">CÓ LỖ HỒNG (FAIL)</div><div class="metric-value" style="color: #f87171;">{fail_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">FIREWALL CHẮN (BLOCKED)</div><div class="metric-value" style="color: #fbbf24;">{blocked_tests}</div></div>', unsafe_allow_html=True)
 with m4:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">FIREWALL ĐÃ CHẮN</div><div class="metric-value" style="color: #fbbf24;">{blocked_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">LỖI HỆ THỐNG (ERROR)</div><div class="metric-value" style="color: #f87171;">{error_tests}</div></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.subheader("🚀 Chọn Module Ứng Dụng Xử Lý")
 
-# 3 Khung Module có liên kết URL Query Param mở Tab Chrome mới
 c1, c2, c3 = st.columns(3)
 
 with c1:

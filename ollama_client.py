@@ -1,6 +1,6 @@
 import requests
 
-OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_BASE_URL = "http://localhost:11436"
 
 def get_installed_models() -> list:
     """Tự động lấy danh sách model hiện có trong Ollama."""
