@@ -38,7 +38,17 @@ if "page" in query_params:
 # ==============================================================================
 # 🎨 GIAO DIỆN TRANG CHỦ DASHBOARD
 # ==============================================================================
-
+with st.sidebar:
+    st.divider()
+    if st.button("🗑️ Xóa toàn bộ CSDL PostgreSQL", type="primary", use_container_width=True):
+        from db_manager import clear_all_logs
+        success, msg = clear_all_logs()
+        if success:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+            
 st.markdown("""
 <style>
     .stAppDeployButton, button[title="Deploy this app"], [data-testid="stAppDeployButton"], footer {
@@ -178,3 +188,4 @@ with c3:
         <a href="/?page=soc_monitor" target="_blank" class="open-tab-btn btn-3">📊 MỞ MODULE 3 (TAB MỚI) ↗</a>
     </div>
     """, unsafe_allow_html=True)
+    

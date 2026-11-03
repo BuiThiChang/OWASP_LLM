@@ -1,19 +1,34 @@
+"""
+FILE: pages/3_soc_monitor.py
+Mô tả: Module 03 - Trung tâm Giám sát An ninh (SOC Monitor & Audit Trail).
+- Đồng bộ CSDL chuẩn 3 trạng thái: BLOCKED | FAIL | PASS
+- Trực quan hóa ma trận rủi ro OWASP qua Biểu đồ Radar và Phân bổ đe dọa
+- Bộ lọc đa chiều (Thời gian, Mô hình, Danh mục, Trạng thái)
+- Hỗ trợ xuất dữ liệu Audit Trail phục vụ công tác kiểm toán và báo cáo NCKH
+"""
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import sys
 import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 1. THIẾT LẬP ĐƯỜNG DẪN IMPORT TỪ THƯ MỤC GỐC
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from db_manager import get_recent_logs
 
+# 2. CẤU HÌNH TRANG STREAMLIT
 st.set_page_config(
-    page_title="SOC Security Monitor & Audit Trail - LLMVault",
+    page_title="SOC Security Monitor & Audit Trail - CAND",
     page_icon="📊",
     layout="wide"
 )
 
+# 3. CSS TÙY CHỈNH THEO PHONG CÁCH SOC CYBER DEFENSE (TONE EMERALD/GREEN)
 st.markdown("""
 <style>
     .stAppDeployButton, button[title="Deploy this app"], [data-testid="stAppDeployButton"], footer {
@@ -30,71 +45,136 @@ st.markdown("""
         font-size: 1.8rem;
     }
     .summary-card {
-        background-color: rgba(16, 185, 129, 0.05);
-        border: 1px solid rgba(16, 185, 129, 0.2);
+        background-color: rgba(16, 185, 129, 0.04);
+        border: 1px solid rgba(16, 185, 129, 0.25);
         border-radius: 8px;
-        padding: 12px 16px;
+        padding: 14px 18px;
         text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .card-title {
+        font-size: 0.8rem;
+        opacity: 0.8;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .card-num {
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin-top: 4px;
+        font-family: monospace;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# 4. TIÊU ĐỀ MODULE
 st.markdown("""
 <div class="green-header">
-    <div class="green-title">📊 MODULE 03: SOC SECURITY MONITOR & OWASP TOP 10 AUDIT TRAIL</div>
-    <div style="opacity: 0.8; font-size: 0.95rem;">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố từ các phiên chạy Red Team & Sandbox thực tế.</div>
+    <div class="green-title">📊 MODULE 03: SOC SECURITY OPERATIONS CENTER & AUDIT TRAIL</div>
+    <div style="opacity: 0.85; font-size: 0.95rem;">
+        Trung tâm tiếp nhận sự kiện, phân tích nhật ký an ninh và giám sát khả năng phòng thủ của hệ thống AI theo thời gian thực.
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
-raw_logs = get_recent_logs(500)
+# 5. TẢI DỮ LIỆU NHẬT KÝ TỪ CƠ SỞ DỮ LIỆU
+raw_logs = get_recent_logs(1000)
 
 if not raw_logs:
-    st.info("ℹ️ Chưa có dữ liệu nhật ký sự cố. Hãy thực hiện kiểm thử ở Module Red Team hoặc Live Sandbox để ghi nhận lịch sử vào SOC.")
+    st.info("ℹ️ Hiện chưa có dữ liệu nhật ký sự cố trong CSDL. Hãy thực hiện kiểm thử tự động ở **Module 01 (Red Team)** hoặc tương tác trực tiếp ở **Module 02 (Live Sandbox)** để hệ thống ghi nhận sự kiện.")
 else:
+    # Chuyển đổi dữ liệu sang DataFrame
     df = pd.DataFrame(raw_logs, columns=[
         "ID", "Timestamp", "Model", "Test ID", "Category", 
         "Name", "Prompt", "Response", "Status", "Reason"
     ])
-    
-    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-    
+
+    # Chuẩn hóa giá trị Status về 3 trạng thái duy nhất
+    def normalize_status(val):
+        s = str(val).upper().strip()
+        if s in ["BLOCKED", "PROXY-BLOCKED"]:
+            return "BLOCKED"
+        elif s in ["FAIL", "FAILED", "EXPLOITED", "VULNERABLE"]:
+            return "FAIL"
+        else:
+            return "PASS"
+
+    df["Status"] = df["Status"].apply(normalize_status)
+
+    # 6. KHUNG CHỈ SỐ THỐNG KÊ TỔNG QUAN (KPI METRIC CARDS)
     total_count = len(df)
-    safe_count = len(df[df["Status"].isin(["SAFE", "PASS"])])
-    blocked_count = len(df[df["Status"].isin(["BLOCKED", "FAIL"])])
-    error_count = len(df[df["Status"] == "ERROR"])
+    pass_count = (df["Status"] == "PASS").sum()
+    fail_count = (df["Status"] == "FAIL").sum()
+    blocked_count = (df["Status"] == "BLOCKED").sum()
     
+    # Tính tỷ lệ phòng thủ thành công: (PASS + BLOCKED) / TOTAL
+    defense_rate = ((pass_count + blocked_count) / total_count * 100) if total_count > 0 else 100.0
+
+    c_m1, c_m2, c_m3, c_m4, c_m5 = st.columns(5)
     with c_m1:
-        st.markdown(f'<div class="summary-card"><div style="font-size:0.8rem; opacity:0.8;">TỔNG LOGS GHI NHẬN</div><div style="font-size:1.6rem; font-weight:bold;">{total_count}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+            <div class="summary-card">
+                <div class="card-title">TỔNG SỰ KIỆN GHI NHẬN</div>
+                <div class="card-num" style="color: #e2e8f0;">{total_count}</div>
+            </div>
+        ''', unsafe_allow_html=True)
     with c_m2:
-        st.markdown(f'<div class="summary-card"><div style="font-size:0.8rem; color:#4ade80;">AN TOÀN (SAFE)</div><div style="font-size:1.6rem; font-weight:bold; color:#4ade80;">{safe_count}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+            <div class="summary-card">
+                <div class="card-title" style="color: #fbbf24;">TƯỜNG LỬA CHẶN (BLOCKED)</div>
+                <div class="card-num" style="color: #fbbf24;">{blocked_count}</div>
+            </div>
+        ''', unsafe_allow_html=True)
     with c_m3:
-        st.markdown(f'<div class="summary-card"><div style="font-size:0.8rem; color:#f87171;">ĐÃ CHẶN (BLOCKED)</div><div style="font-size:1.6rem; font-weight:bold; color:#f87171;">{blocked_count}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+            <div class="summary-card">
+                <div class="card-title" style="color: #f87171;">BỊ KHAI THÁC (FAIL)</div>
+                <div class="card-num" style="color: #f87171;">{fail_count}</div>
+            </div>
+        ''', unsafe_allow_html=True)
     with c_m4:
-        st.markdown(f'<div class="summary-card"><div style="font-size:0.8rem; color:#fbbf24;">LỖI HỆ THỐNG (ERROR)</div><div style="font-size:1.6rem; font-weight:bold; color:#fbbf24;">{error_count}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'''
+            <div class="summary-card">
+                <div class="card-title" style="color: #4ade80;">AN TOÀN / TỰ VỆ (PASS)</div>
+                <div class="card-num" style="color: #4ade80;">{pass_count}</div>
+            </div>
+        ''', unsafe_allow_html=True)
+    with c_m5:
+        st.markdown(f'''
+            <div class="summary-card">
+                <div class="card-title" style="color: #38bdf8;">TỶ LỆ PHÒNG THỦ</div>
+                <div class="card-num" style="color: #38bdf8;">{defense_rate:.1f}%</div>
+            </div>
+        ''', unsafe_allow_html=True)
 
     st.write("")
-    
-    f_col1, f_col2, f_col3 = st.columns([1, 1, 2])
-    
-    with f_col1:
-        status_filter = st.multiselect(
-            "Lọc theo Status:",
-            options=["SAFE", "BLOCKED", "ERROR", "PASS", "FAIL"],
-            default=["SAFE", "BLOCKED", "ERROR"]
-        )
-        
-    with f_col2:
-        all_owasp_cats = ["Tất cả"] + list(df["Category"].dropna().unique())
-        cat_filter = st.selectbox("Lọc theo Danh mục OWASP:", options=all_owasp_cats)
-        
-    with f_col3:
-        search_kw = st.text_input("🔍 Tìm kiếm theo Từ khóa (Prompt/Reason):", value="")
 
+    # 7. KHU VỰC CÔNG CỤ BỘ LỌC ĐA CHIỀU (FILTERING & SEARCH)
+    st.markdown("#### 🔍 Bộ Lọc & Tra Cứu Sự Cố An Ninh")
+    f_col1, f_col2, f_col3, f_col4 = st.columns([1, 1.2, 1, 1.8])
+
+    with f_col1:
+        status_options = ["BLOCKED", "FAIL", "PASS"]
+        status_filter = st.multiselect("Lọc trạng thái:", options=status_options, default=status_options)
+
+    with f_col2:
+        cats_in_db = ["Tất cả"] + sorted(list(df["Category"].dropna().unique()))
+        selected_cat = st.selectbox("Lọc theo Danh mục:", options=cats_in_db)
+
+    with f_col3:
+        models_in_db = ["Tất cả"] + sorted(list(df["Model"].dropna().unique()))
+        selected_model = st.selectbox("Lọc theo Mô hình:", options=models_in_db)
+
+    with f_col4:
+        search_kw = st.text_input("Tìm kiếm theo chuỗi Prompt / Lý do thẩm định:", value="")
+
+    # Thực hiện lọc
     filtered_df = df[df["Status"].isin(status_filter)]
-    
-    if cat_filter != "Tất cả":
-        filtered_df = filtered_df[filtered_df["Category"] == cat_filter]
-        
+    if selected_cat != "Tất cả":
+        filtered_df = filtered_df[filtered_df["Category"] == selected_cat]
+    if selected_model != "Tất cả":
+        filtered_df = filtered_df[filtered_df["Model"] == selected_model]
     if search_kw.strip():
         kw = search_kw.lower()
         filtered_df = filtered_df[
@@ -104,64 +184,111 @@ else:
 
     st.divider()
 
-    st.markdown("### 📈 Phân Tích Ma Trận Lỗ Hổng OWASP LLM Top 10 (Từ Lịch Sử Thực Tế)")
+    # 8. PHÂN TÍCH MA TRẬN RỦI RO BẰNG BIỂU ĐỒ (RADAR CHART, PIE CHART & BAR CHART)
+    st.markdown("### 📈 Ma Trận Phân Tích Rủi Ro An Ninh Thông Tin")
     
-    col_chart1, col_chart2 = st.columns(2)
+    col_chart_left, col_chart_right = st.columns(2)
 
-    with col_chart1:
-        status_counts = filtered_df["Status"].value_counts().reset_index()
-        status_counts.columns = ["Trạng thái", "Số lượng"]
+    with col_chart_left:
+        # Biểu đồ tròn phân bổ kết quả
+        st.markdown("##### 🎯 Phân bổ Trạng thái Thẩm định Sự cố")
+        status_dist = filtered_df["Status"].value_counts().reset_index()
+        status_dist.columns = ["Trạng thái", "Số lượng"]
+        
+        color_mapping = {
+            "BLOCKED": "#fbbf24",  # Vàng cam cảnh báo
+            "FAIL": "#ef4444",     # Đỏ lỗ hổng
+            "PASS": "#10b981"      # Xanh lá an toàn
+        }
         
         fig_pie = px.pie(
-            status_counts, 
-            names="Trạng thái", 
-            values="Số lượng", 
-            title="Tỉ lệ Phân bổ Trạng thái Kiểm thử Thực tế",
+            status_dist,
+            names="Trạng thái",
+            values="Số lượng",
             color="Trạng thái",
-            color_discrete_map={"SAFE": "#10b981", "PASS": "#10b981", "BLOCKED": "#ef4444", "FAIL": "#ef4444", "ERROR": "#f59e0b"}
+            color_discrete_map=color_mapping,
+            hole=0.4
         )
-        st.plotly_chart(fig_pie, width="stretch")
+        fig_pie.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="#e2e8f0"),
+            height=340,
+            margin=dict(l=20, r=20, t=20, b=20)
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-    with col_chart2:
-        blocked_df = filtered_df[filtered_df["Status"].isin(["BLOCKED", "FAIL"])]
-        if not blocked_df.empty:
-            cat_counts = blocked_df["Category"].value_counts().reset_index()
-            cat_counts.columns = ["Danh mục OWASP", "Số vi phạm (BLOCKED)"]
-            
-            fig_bar = px.bar(
-                cat_counts, 
-                x="Danh mục OWASP", 
-                y="Số vi phạm (BLOCKED)",
-                title="Mật độ Tấn công bị Ngăn chặn (BLOCKED)",
-                color_discrete_sequence=["#ef4444"]
+    with col_chart_right:
+        # Biểu đồ Radar: Tỷ lệ an toàn theo từng nhóm danh mục OWASP
+        st.markdown("##### 🛡️ Vùng Đề kháng An ninh theo Nhóm Nguy cơ (Radar Chart)")
+        
+        # Gom nhóm tính tỷ lệ phòng vệ thành công của từng Category: (PASS + BLOCKED) / Total_in_Cat
+        cat_stats = filtered_df.groupby("Category").apply(
+            lambda x: ((x["Status"].isin(["PASS", "BLOCKED"])).sum() / len(x) * 100) if len(x) > 0 else 0
+        ).reset_index()
+        cat_stats.columns = ["Category", "Defense_Rate"]
+
+        if not cat_stats.empty:
+            cats = [c.split(" - ")[0] for c in cat_stats["Category"].tolist()]
+            rates = cat_stats["Defense_Rate"].tolist()
+
+            fig_radar = go.Figure(go.Scatterpolar(
+                r=rates + [rates[0]],
+                theta=cats + [cats[0]],
+                fill='toself',
+                name='Tỷ lệ Đề kháng %',
+                line_color='#10b981',
+                fillcolor='rgba(16, 185, 129, 0.25)'
+            ))
+            fig_radar.update_layout(
+                polar=dict(
+                    radialaxis=dict(visible=True, range=[0, 100], gridcolor="rgba(255,255,255,0.15)"),
+                    angularaxis=dict(gridcolor="rgba(255,255,255,0.15)")
+                ),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#e2e8f0"),
+                showlegend=False,
+                height=340,
+                margin=dict(l=40, r=40, t=20, b=20)
             )
-            st.plotly_chart(fig_bar, width="stretch")
+            st.plotly_chart(fig_radar, use_container_width=True)
         else:
-            st.success("🎉 Hệ thống an toàn! Chưa ghi nhận vi phạm nào trong bộ lọc hiện tại.")
+            st.info("Chưa đủ dữ liệu để dựng biểu đồ Radar.")
 
-    st.markdown(f"#### 📋 Bảng Nhật ký Chi tiết Audit Trail ({len(filtered_df)} bản ghi)")
-    
+    # 9. BẢNG NHẬT KÝ KIỂM TOÁN AN NINH CHI TIẾT (AUDIT TRAIL)
+    st.markdown(f"#### 📋 Bảng Nhật ký Kiểm toán Chi tiết ({len(filtered_df)} bản ghi)")
+
     df_display = filtered_df[["Timestamp", "Model", "Test ID", "Category", "Status", "Prompt", "Response", "Reason"]]
-    
-    # Bảng dữ liệu DataFrame
-    st.dataframe(
-    df_display,
-    column_config={
-        "Timestamp": st.column_config.DatetimeColumn("Thời gian", format="DD/MM/YYYY HH:mm:ss"),
-        "Category": st.column_config.TextColumn("Nhóm OWASP"),
-        "Prompt": st.column_config.TextColumn("Prompt đầu vào", width="medium"),
-        "Response": st.column_config.TextColumn("Phản hồi hệ thống", width="large"),
-    },
-    width="stretch",
-    hide_index=True
-)
 
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Timestamp": st.column_config.TextColumn("Thời gian", width="medium"),
+            "Model": st.column_config.TextColumn("Mô hình", width="small"),
+            "Test ID": st.column_config.TextColumn("Mã ID", width="small"),
+            "Category": st.column_config.TextColumn("Danh mục nguy cơ", width="medium"),
+            "Status": st.column_config.SelectboxColumn(
+                "Trạng thái",
+                help="Kết quả đánh giá an ninh chuẩn hóa",
+                options=["BLOCKED", "FAIL", "PASS"],
+                width="small"
+            ),
+            "Prompt": st.column_config.TextColumn("Chuỗi truy vấn / Payload", width="large"),
+            "Response": st.column_config.TextColumn("Phản hồi hệ thống", width="large"),
+            "Reason": st.column_config.TextColumn("Căn cứ thẩm định", width="large")
+        }
+    )
+
+    # 10. XUẤT BÁO CÁO AUDIT LOG RA FILE CSV
     st.write("")
-    csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+    csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 XUẤT BÁO CÁO SOC AUDIT (.CSV)",
-        data=csv_data,
-        file_name="LLMVault_SOC_OWASP_Audit_Report.csv",
+        label="📥 XUẤT BÁO CÁO SOC AUDIT REPORT (.CSV)",
+        data=csv_bytes,
+        file_name="SOC_AI_Security_Audit_Report.csv",
         mime="text/csv",
         type="primary"
     )
