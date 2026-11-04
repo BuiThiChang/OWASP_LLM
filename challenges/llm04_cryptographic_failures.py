@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A04:2025 - Cryptographic Failures"
+TITLE = "A04:2026- Cryptographic Failures"
 FLAG = "FLAG{weak_crypto_hardcoded_key}"
 
 DENY_PATTERNS = [

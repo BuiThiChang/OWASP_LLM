@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A03:2025 - Software Supply Chain Failures"
+TITLE = "A03:2026- Software Supply Chain Failures"
 FLAG = "FLAG{malicious_typosquatting_package}"
 
 DENY_PATTERNS = [

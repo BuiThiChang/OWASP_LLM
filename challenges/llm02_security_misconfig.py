@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A02:2025 - Security Misconfiguration"
+TITLE = "A02:2026 - Security Misconfiguration"
 FLAG = "FLAG{debug_traceback_exposed}"
 
 DENY_PATTERNS = [

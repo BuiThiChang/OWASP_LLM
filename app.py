@@ -1,54 +1,41 @@
+"""
+FILE: app.py
+Mô tả: Trang chủ Dashboard Trung tâm - LLMVault Security Suite & OWASP AI Guardrail.
+- Thống kê toàn diện 3 trạng thái an ninh: SAFE/PASS | BLOCKED | FAIL
+- Tích hợp nút xóa sạch dữ liệu PostgreSQL tập trung trên Sidebar
+- Điều hướng trực quan đến 5 phân hệ chuyên sâu
+"""
+
 import streamlit as st
 import pandas as pd
 import os
 
-from db_manager import get_recent_logs, init_db
+from db_manager import get_recent_logs, init_db, clear_all_logs
 
-# Khởi tạo CSDL & Indexes PostgreSQL tự động
+# 1. Khởi tạo CSDL & Indexes PostgreSQL tự động
 init_db()
 
+# 2. Cấu hình trang
 st.set_page_config(
-    page_title="LLMVault Security Suite & OWASP AI Guardrail",
+    page_title="LLMVault Security Suite & OWASP 2026",
     page_icon="🛡️",
     layout="wide"
 )
 
-# ==============================================================================
-# 🔀 BỘ ĐIỀU HƯỚNG SPA
-# ==============================================================================
-query_params = st.query_params
-
-if "page" in query_params:
-    page_target = query_params["page"]
-    
-    file_map = {
-        "red_team": "pages/1_red_team_audit.py",
-        "live_sandbox": "pages/2_live_sandbox.py",
-        "soc_monitor": "pages/3_soc_monitor.py"
-    }
-    
-    target_file = file_map.get(page_target)
-    
-    if target_file and os.path.exists(target_file):
-        with open(target_file, "r", encoding="utf-8") as f:
-            code = f.read()
-        exec(code, globals())
-        st.stop()
-
-# ==============================================================================
-# 🎨 GIAO DIỆN TRANG CHỦ DASHBOARD
-# ==============================================================================
+# 3. Sidebar điều khiển
 with st.sidebar:
+    st.markdown("### ⚙️ **Quản trị Hệ thống**")
+    st.caption("Cơ sở dữ liệu: PostgreSQL (llmvault_db)")
     st.divider()
     if st.button("🗑️ Xóa toàn bộ CSDL PostgreSQL", type="primary", use_container_width=True):
-        from db_manager import clear_all_logs
         success, msg = clear_all_logs()
         if success:
             st.success(msg)
             st.rerun()
         else:
             st.error(msg)
-            
+
+# 4. Custom Cyber CSS
 st.markdown("""
 <style>
     .stAppDeployButton, button[title="Deploy this app"], [data-testid="stAppDeployButton"], footer {
@@ -83,109 +70,110 @@ st.markdown("""
     }
     .module-card {
         border-radius: 12px;
-        padding: 22px;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
+        padding: 20px;
         background-color: rgba(255, 255, 255, 0.02);
-        transition: all 0.2s ease-in-out;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 15px;
     }
-    .module-title {
-        font-size: 1.2rem;
-        font-weight: 700;
-        margin-bottom: 12px;
-    }
-    .module-desc {
-        font-size: 0.88rem;
-        opacity: 0.82;
-        line-height: 1.5;
-        margin-bottom: 20px;
-        min-height: 55px;
-    }
-    .open-tab-btn {
-        display: block;
-        width: 100%;
-        text-align: center;
-        padding: 10px 14px;
-        border-radius: 8px;
-        text-decoration: none !important;
-        font-weight: 600;
-        font-size: 0.88rem;
-    }
-    .mod-1 { border: 1px solid rgba(244, 63, 94, 0.4); }
-    .mod-1 .module-title { color: #f43f5e; }
-    .btn-1 { background-color: #e11d48; color: #ffffff !important; }
-
-    .mod-2 { border: 1px solid rgba(6, 182, 212, 0.4); }
-    .mod-2 .module-title { color: #38bdf8; }
-    .btn-2 { background-color: #0284c7; color: #ffffff !important; }
-
-    .mod-3 { border: 1px solid rgba(16, 185, 129, 0.4); }
-    .mod-3 .module-title { color: #34d399; }
-    .btn-3 { background-color: #059669; color: #ffffff !important; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🛡️ LLMVault Security Suite & OWASP AI Guardrail")
-st.caption("Nền tảng tổng hợp Đánh giá lỗ hổng LLM (Red Teaming), Phòng thủ theo thời gian thực (AI Proxy Firewall) & Giám sát An ninh (SOC Monitor)")
+st.caption("Nền tảng kiểm thử an ninh LLM theo chuẩn OWASP 2026 (A01 -> A10), Tường lửa AI Proxy (Port 11435) & SOC Monitor")
 
 st.write("")
 
-# Metrics
+# 5. Đọc logs và tính toán KPI Metrics chuẩn xác
 logs_data = get_recent_logs(1000)
 total_tests = len(logs_data)
 
-safe_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] in ['SAFE', 'PASS'])
-blocked_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] in ['BLOCKED', 'FAIL'])
-error_tests = sum(1 for row in logs_data if len(row) > 8 and row[8] == 'ERROR')
+pass_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['SAFE', 'PASS'])
+blocked_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['BLOCKED', 'PROXY-BLOCKED'])
+fail_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['FAIL', 'FAILED', 'EXPLOITED'])
 
 st.markdown('<div class="metrics-container">', unsafe_allow_html=True)
 m1, m2, m3, m4 = st.columns(4)
 with m1:
     st.markdown(f'<div class="metric-card"><div class="metric-title">TỔNG TRUY VẤN</div><div class="metric-value">{total_tests}</div></div>', unsafe_allow_html=True)
 with m2:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #4ade80;">AN TOÀN (SAFE)</div><div class="metric-value" style="color: #4ade80;">{safe_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #4ade80;">AN TOÀN (PASS)</div><div class="metric-value" style="color: #4ade80;">{pass_count}</div></div>', unsafe_allow_html=True)
 with m3:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">FIREWALL CHẮN (BLOCKED)</div><div class="metric-value" style="color: #fbbf24;">{blocked_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">TƯỜNG LỬA CHẶN (BLOCKED)</div><div class="metric-value" style="color: #fbbf24;">{blocked_count}</div></div>', unsafe_allow_html=True)
 with m4:
-    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">LỖI HỆ THỐNG (ERROR)</div><div class="metric-value" style="color: #f87171;">{error_tests}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">BỊ KHAI THÁC (FAIL)</div><div class="metric-value" style="color: #f87171;">{fail_count}</div></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.subheader("🚀 Chọn Module Ứng Dụng Xử Lý")
+# 6. Các Phân Hệ Nghiệp Vụ Chính (Click chuyển trang tự động khớp tên file)
+st.subheader("🚀 Các Phân Hệ Nghiệp Vụ Chính")
+st.caption("💡 Bấm trực tiếp vào các nút bên dưới hoặc chọn tại thanh Sidebar bên trái để truy cập module:")
+
+def get_actual_page_path(prefix: str, fallback_name: str) -> str:
+    """Tự động dò tìm tên file thực tế trong thư mục pages/ theo tiền tố."""
+    pages_dir = os.path.join(os.path.dirname(__file__), "pages")
+    if os.path.exists(pages_dir):
+        for f in os.listdir(pages_dir):
+            if f.startswith(prefix) and f.endswith(".py"):
+                return f"pages/{f}"
+    return f"pages/{fallback_name}"
+
+page_mod1 = get_actual_page_path("1_", "1_red_team_audit.py")
+page_mod2 = get_actual_page_path("2_", "2_live_sandbox.py")
+page_mod3 = get_actual_page_path("3_", "3_soc_monitor.py")
+page_mod4 = get_actual_page_path("4_", "4_threat_intelligence.py")
+page_mod5 = get_actual_page_path("5_", "5_ab_benchmark.py")
 
 c1, c2, c3 = st.columns(3)
 
 with c1:
     st.markdown("""
-    <div class="module-card mod-1">
-        <div>
-            <div class="module-title">🎯 Module 1: Red Team Audit</div>
-            <div class="module-desc">Tự động quét & khai thác 17+ lỗ hổng OWASP Top 10 đối với LLM (Prompt Injection, System Leak, Context Poisoning...).</div>
-        </div>
-        <a href="/?page=red_team" target="_blank" class="open-tab-btn btn-1">⚡ MỞ MODULE 1 (TAB MỚI) ↗</a>
+    <div class="module-card" style="border-left: 4px solid #f43f5e; min-height: 140px;">
+        <h4 style="color: #f43f5e; margin: 0 0 8px 0;">🔴 Module 1: Red Team Audit</h4>
+        <p style="font-size: 0.88rem; opacity: 0.85; margin: 0;">Quét tự động kịch bản khai thác 10 nhóm nguy cơ OWASP 2026 (A01 -> A10), đo lường mức độ an toàn.</p>
     </div>
     """, unsafe_allow_html=True)
+    if st.button("Truy cập Red Team Audit ↗", key="btn_go_mod1", use_container_width=True):
+        st.switch_page(page_mod1)
 
 with c2:
     st.markdown("""
-    <div class="module-card mod-2">
-        <div>
-            <div class="module-title">💬 Module 2: Live AI Firewall</div>
-            <div class="module-desc">Sandbox tương tác trực tiếp qua cổng AI Guardrail Proxy (Port 11435) để thử nghiệm chặn câu lệnh độc hại thời gian thực.</div>
-        </div>
-        <a href="/?page=live_sandbox" target="_blank" class="open-tab-btn btn-2">🛡️ MỞ MODULE 2 (TAB MỚI) ↗</a>
+    <div class="module-card" style="border-left: 4px solid #38bdf8; min-height: 140px;">
+        <h4 style="color: #38bdf8; margin: 0 0 8px 0;">🧪 Module 2: Live Sandbox</h4>
+        <p style="font-size: 0.88rem; opacity: 0.85; margin: 0;">Thử nghiệm thời gian thực: Tương tác trực tiếp qua cổng Tường lửa Proxy 11435 và quét tệp/ảnh OCR.</p>
     </div>
     """, unsafe_allow_html=True)
+    if st.button("Truy cập Live Sandbox ↗", key="btn_go_mod2", use_container_width=True):
+        st.switch_page(page_mod2)
 
 with c3:
     st.markdown("""
-    <div class="module-card mod-3">
-        <div>
-            <div class="module-title">📊 Module 3: SOC Monitor</div>
-            <div class="module-desc">Trung tâm giám sát nhật ký an ninh, truy vết dữ liệu sự cố và thống kê các lượt truy cập vi phạm theo quy chuẩn audit.</div>
-        </div>
-        <a href="/?page=soc_monitor" target="_blank" class="open-tab-btn btn-3">📊 MỞ MODULE 3 (TAB MỚI) ↗</a>
+    <div class="module-card" style="border-left: 4px solid #34d399; min-height: 140px;">
+        <h4 style="color: #34d399; margin: 0 0 8px 0;">📊 Module 3: SOC Monitor</h4>
+        <p style="font-size: 0.88rem; opacity: 0.85; margin: 0;">Trung tâm điều hành an ninh mạng: Trực quan hóa ma trận rủi ro qua Radar, lọc sự cố và xuất báo cáo CSV.</p>
     </div>
     """, unsafe_allow_html=True)
-    
+    if st.button("Truy cập SOC Monitor ↗", key="btn_go_mod3", use_container_width=True):
+        st.switch_page(page_mod3)
+
+st.write("")
+
+c4, c5 = st.columns(2)
+
+with c4:
+    st.markdown("""
+    <div class="module-card" style="border-left: 4px solid #a855f7; min-height: 130px;">
+        <h4 style="color: #c084fc; margin: 0 0 8px 0;">🛡️ Module 4: Threat Intelligence</h4>
+        <p style="font-size: 0.88rem; opacity: 0.85; margin: 0;">Kho tri thức nguy cơ: Lưu trữ và tra cứu chữ ký số SHA-256 các mẫu payload tấn công từ Red Team & Blue Team.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Truy cập Threat Intelligence ↗", key="btn_go_mod4", use_container_width=True):
+        st.switch_page(page_mod4)
+
+with c5:
+    st.markdown("""
+    <div class="module-card" style="border-left: 4px solid #00f3ff; min-height: 130px;">
+        <h4 style="color: #00f3ff; margin: 0 0 8px 0;">⚖️ Module 5: A/B Benchmark</h4>
+        <p style="font-size: 0.88rem; opacity: 0.85; margin: 0;">Đánh giá định lượng hiệu quả bảo vệ: So sánh đối chứng trực tiếp giữa mô hình nguyên bản và mô hình có Tường lửa.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Truy cập A/B Benchmark ↗", key="btn_go_mod5", use_container_width=True):
+        st.switch_page(page_mod5)

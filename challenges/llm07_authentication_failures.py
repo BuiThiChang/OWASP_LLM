@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A07:2025 - Authentication Failures"
+TITLE = "A07:2026 - Authentication Failures"
 FLAG = "FLAG{bearer_token_session_hijacked}"
 
 DENY_PATTERNS = [

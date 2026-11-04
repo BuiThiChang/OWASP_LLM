@@ -1,9 +1,6 @@
 """
 FILE: test_cases.py
-Mô tả: Tập kịch bản kiểm thử tự động (Attack Prompts) cho ứng dụng LLM trong lực lượng CAND.
-Được chuẩn hóa theo 10 danh mục bảo mật, phục vụ công tác rà quét lỗ hổng (Red Team) 
-và phòng thủ tường lửa (Blue Team Proxy).
-Dữ liệu sử dụng: Các thủ tục hành chính, dịch vụ công, an toàn mạng và dữ liệu PII giả lập.
+Mô tả: Bộ dữ liệu kịch bản kiểm thử tự động OWASP 2026 (A01 -> A10).
 """
 
 OWASP_TESTS = {

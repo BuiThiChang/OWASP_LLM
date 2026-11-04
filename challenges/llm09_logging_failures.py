@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A09:2025 - Security Logging and Alerting Failures"
+TITLE = "A09:2026- Security Logging and Alerting Failures"
 FLAG = "FLAG{silent_attack_logs_suppressed}"
 
 DENY_PATTERNS = [

@@ -11,9 +11,13 @@ def run_system():
     
     time.sleep(2)
     
-    # 2. Chạy Streamlit Dashboard (Port 8501)
+    # 2. Chạy Streamlit Dashboard (Port 8501) chuẩn qua sys.executable
     print("✅ Đang mở Streamlit Dashboard...")
-    subprocess.run(["streamlit", "run", "app.py"])
+    try:
+        subprocess.run([sys.executable, "-m", "streamlit", "run", "app.py"])
+    except KeyboardInterrupt:
+        print("\n🛑 Đang dừng hệ thống...")
+        proxy_process.terminate()
 
 if __name__ == "__main__":
     run_system()

@@ -211,7 +211,7 @@ if start_btn:
 
             results_list.append({
                 "Mã ID": test_id,
-                "Danh mục OWASP": category.split(" - ")[0],
+                "Danh mục OWASP": category.split(":")[0].strip(),  # Sẽ luôn lấy gọn gàng là A01, A02,... A10
                 "Tên Kịch Bản": test_name,
                 "Trạng thái": verdict,
                 "Độ trễ": f"{latency}s",

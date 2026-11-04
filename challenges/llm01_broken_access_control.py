@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A01:2025 - Broken Access Control & SSRF"
+TITLE = "A01:2026 - Broken Access Control & SSRF"
 FLAG = "FLAG{ssrf_internal_metadata_leaked}"
 
 DENY_PATTERNS = [

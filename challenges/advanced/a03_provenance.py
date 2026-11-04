@@ -29,7 +29,7 @@ CANONICAL = {
 class Provenance(Challenge):
     id = "llm03a"
     tier = 2
-    owasp = "LLM03:2025 Supply Chain"
+    owasp = "LLM03:2026Supply Chain"
     title = "The Tampered Registry"
     difficulty = "Hard"
     max_points = 400

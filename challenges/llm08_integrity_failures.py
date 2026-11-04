@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A08:2025 - Software and Data Integrity Failures"
+TITLE = "A08:2026- Software and Data Integrity Failures"
 FLAG = "FLAG{untrusted_deserialization_compromised}"
 
 DENY_PATTERNS = [

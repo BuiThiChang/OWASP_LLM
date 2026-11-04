@@ -34,7 +34,7 @@ def decode_flag_part(encoded: str) -> str:
 class Challenge:
     id: str = ""                # "llm01"
     tier: int = 1              # 1 = core (OWASP base), 2 = advanced (locked)
-    owasp: str = ""             # "LLM01:2025 Prompt Injection"
+    owasp: str = ""             # "LLM01:2026Prompt Injection"
     title: str = ""
     difficulty: str = "Medium"  # Easy | Medium | Hard
     max_points: int = 200

@@ -18,7 +18,7 @@ FLAG = f"{FLAG_PREFIX}{{{_FLAG_SUFFIX_PREFIX}{SECRET}}}"
 class ModelExtraction(Challenge):
     id = "llm10a"
     tier = 2
-    owasp = "LLM10:2025 Unbounded Consumption"
+    owasp = "LLM10:2026Unbounded Consumption"
     title = "The Oracle"
     difficulty = "Hard"
     max_points = 400

@@ -1,10 +1,10 @@
 """
 FILE: pages/3_soc_monitor.py
 Mô tả: Module 03 - Trung tâm Giám sát An ninh (SOC Monitor & Audit Trail).
+- Chuẩn hóa cột thời gian từ Epoch Unix sang DD/MM/YYYY HH:MM:SS
 - Đồng bộ CSDL chuẩn 3 trạng thái: BLOCKED | FAIL | PASS
-- Trực quan hóa ma trận rủi ro OWASP qua Biểu đồ Radar và Phân bổ đe dọa
-- Bộ lọc đa chiều (Thời gian, Mô hình, Danh mục, Trạng thái)
-- Hỗ trợ xuất dữ liệu Audit Trail phục vụ công tác kiểm toán và báo cáo NCKH
+- Tự động chuẩn hóa toàn bộ mã ID và danh mục theo OWASP 2026 (A01 -> A10)
+- Trực quan hóa ma trận rủi ro qua Biểu đồ Radar và Pie Chart
 """
 
 import streamlit as st
@@ -20,6 +20,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from db_manager import get_recent_logs
+from security_engine import normalize_to_owasp_2026
 
 # 2. CẤU HÌNH TRANG STREAMLIT
 st.set_page_config(
@@ -73,7 +74,7 @@ st.markdown("""
 <div class="green-header">
     <div class="green-title">📊 MODULE 03: SOC SECURITY OPERATIONS CENTER & AUDIT TRAIL</div>
     <div style="opacity: 0.85; font-size: 0.95rem;">
-        Trung tâm tiếp nhận sự kiện, phân tích nhật ký an ninh và giám sát khả năng phòng thủ của hệ thống AI theo thời gian thực.
+        Trung tâm tiếp nhận sự kiện, phân tích nhật ký an ninh và giám sát khả năng phòng thủ của hệ thống AI theo thời gian thực (Chuẩn OWASP 2026).
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -84,13 +85,42 @@ raw_logs = get_recent_logs(1000)
 if not raw_logs:
     st.info("ℹ️ Hiện chưa có dữ liệu nhật ký sự cố trong CSDL. Hãy thực hiện kiểm thử tự động ở **Module 01 (Red Team)** hoặc tương tác trực tiếp ở **Module 02 (Live Sandbox)** để hệ thống ghi nhận sự kiện.")
 else:
-    # Chuyển đổi dữ liệu sang DataFrame
     df = pd.DataFrame(raw_logs, columns=[
         "ID", "Timestamp", "Model", "Test ID", "Category", 
         "Name", "Prompt", "Response", "Status", "Reason"
     ])
 
-    # Chuẩn hóa giá trị Status về 3 trạng thái duy nhất
+    # 5.1. XỬ LÝ CHUẨN HÓA CỘT THỜI GIAN (KHẮC PHỤC TRIỆT ĐỂ ASSERTIONERROR)
+    def parse_smart_datetime(val):
+        if pd.isna(val) or val == "" or val is None:
+            return ""
+        # Thử ép sang số (epoch timestamp)
+        try:
+            num = float(val)
+            if num > 1e11:  # mili-giây
+                return pd.to_datetime(num, unit="ms").strftime("%d/%m/%Y %H:%M:%S")
+            elif num > 1e8:  # giây
+                return pd.to_datetime(num, unit="s").strftime("%d/%m/%Y %H:%M:%S")
+        except (ValueError, TypeError):
+            pass
+        
+        # Thử ép chuỗi datetime chuẩn (ISO hoặc chuỗi thông thường)
+        try:
+            dt = pd.to_datetime(val, errors="coerce")
+            if pd.notna(dt):
+                return dt.strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            pass
+        return str(val)
+
+    df["Thời gian"] = df["Timestamp"].apply(parse_smart_datetime)
+    
+    # 5.2. CHUẨN HÓA TOÀN BỘ MÃ ID VÀ DANH MỤC THEO BỘ QUY CHUẨN 2026
+    normalized_pairs = [normalize_to_owasp_2026(str(t_id), str(cat)) for t_id, cat in zip(df["Test ID"], df["Category"])]
+    df["Mã ID"] = [p[0] for p in normalized_pairs]
+    df["Danh mục nguy cơ"] = [p[1] for p in normalized_pairs]
+
+    # Chuẩn hóa trạng thái về 3 trạng thái duy nhất
     def normalize_status(val):
         s = str(val).upper().strip()
         if s in ["BLOCKED", "PROXY-BLOCKED"]:
@@ -100,15 +130,13 @@ else:
         else:
             return "PASS"
 
-    df["Status"] = df["Status"].apply(normalize_status)
+    df["Trạng thái"] = df["Status"].apply(normalize_status)
 
     # 6. KHUNG CHỈ SỐ THỐNG KÊ TỔNG QUAN (KPI METRIC CARDS)
     total_count = len(df)
-    pass_count = (df["Status"] == "PASS").sum()
-    fail_count = (df["Status"] == "FAIL").sum()
-    blocked_count = (df["Status"] == "BLOCKED").sum()
-    
-    # Tính tỷ lệ phòng thủ thành công: (PASS + BLOCKED) / TOTAL
+    pass_count = (df["Trạng thái"] == "PASS").sum()
+    fail_count = (df["Trạng thái"] == "FAIL").sum()
+    blocked_count = (df["Trạng thái"] == "BLOCKED").sum()
     defense_rate = ((pass_count + blocked_count) / total_count * 100) if total_count > 0 else 100.0
 
     c_m1, c_m2, c_m3, c_m4, c_m5 = st.columns(5)
@@ -150,7 +178,7 @@ else:
 
     st.write("")
 
-    # 7. KHU VỰC CÔNG CỤ BỘ LỌC ĐA CHIỀU (FILTERING & SEARCH)
+    # 7. KHU VỰC CÔNG CỤ BỘ LỌC ĐA CHIỀU
     st.markdown("#### 🔍 Bộ Lọc & Tra Cứu Sự Cố An Ninh")
     f_col1, f_col2, f_col3, f_col4 = st.columns([1, 1.2, 1, 1.8])
 
@@ -159,7 +187,7 @@ else:
         status_filter = st.multiselect("Lọc trạng thái:", options=status_options, default=status_options)
 
     with f_col2:
-        cats_in_db = ["Tất cả"] + sorted(list(df["Category"].dropna().unique()))
+        cats_in_db = ["Tất cả"] + sorted(list(df["Danh mục nguy cơ"].dropna().unique()))
         selected_cat = st.selectbox("Lọc theo Danh mục:", options=cats_in_db)
 
     with f_col3:
@@ -170,9 +198,9 @@ else:
         search_kw = st.text_input("Tìm kiếm theo chuỗi Prompt / Lý do thẩm định:", value="")
 
     # Thực hiện lọc
-    filtered_df = df[df["Status"].isin(status_filter)]
+    filtered_df = df[df["Trạng thái"].isin(status_filter)]
     if selected_cat != "Tất cả":
-        filtered_df = filtered_df[filtered_df["Category"] == selected_cat]
+        filtered_df = filtered_df[filtered_df["Danh mục nguy cơ"] == selected_cat]
     if selected_model != "Tất cả":
         filtered_df = filtered_df[filtered_df["Model"] == selected_model]
     if search_kw.strip():
@@ -184,21 +212,19 @@ else:
 
     st.divider()
 
-    # 8. PHÂN TÍCH MA TRẬN RỦI RO BẰNG BIỂU ĐỒ (RADAR CHART, PIE CHART & BAR CHART)
+    # 8. BIỂU ĐỒ TRỰC QUAN HÓA (RADAR CHART & PIE CHART)
     st.markdown("### 📈 Ma Trận Phân Tích Rủi Ro An Ninh Thông Tin")
-    
     col_chart_left, col_chart_right = st.columns(2)
 
     with col_chart_left:
-        # Biểu đồ tròn phân bổ kết quả
         st.markdown("##### 🎯 Phân bổ Trạng thái Thẩm định Sự cố")
-        status_dist = filtered_df["Status"].value_counts().reset_index()
+        status_dist = filtered_df["Trạng thái"].value_counts().reset_index()
         status_dist.columns = ["Trạng thái", "Số lượng"]
         
         color_mapping = {
-            "BLOCKED": "#fbbf24",  # Vàng cam cảnh báo
-            "FAIL": "#ef4444",     # Đỏ lỗ hổng
-            "PASS": "#10b981"      # Xanh lá an toàn
+            "BLOCKED": "#fbbf24",
+            "FAIL": "#ef4444",
+            "PASS": "#10b981"
         }
         
         fig_pie = px.pie(
@@ -219,17 +245,18 @@ else:
         st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_chart_right:
-        # Biểu đồ Radar: Tỷ lệ an toàn theo từng nhóm danh mục OWASP
-        st.markdown("##### 🛡️ Vùng Đề kháng An ninh theo Nhóm Nguy cơ (Radar Chart)")
+        st.markdown("##### 🛡️ Vùng Đề kháng An ninh theo 10 Nhóm OWASP 2026")
         
-        # Gom nhóm tính tỷ lệ phòng vệ thành công của từng Category: (PASS + BLOCKED) / Total_in_Cat
-        cat_stats = filtered_df.groupby("Category").apply(
-            lambda x: ((x["Status"].isin(["PASS", "BLOCKED"])).sum() / len(x) * 100) if len(x) > 0 else 0
-        ).reset_index()
-        cat_stats.columns = ["Category", "Defense_Rate"]
+        # Chỉ tính tỷ lệ trên các nhóm A01 -> A10
+        owasp_only = filtered_df[filtered_df["Mã ID"].str.startswith("A", na=False)]
+        
+        if not owasp_only.empty:
+            cat_stats = owasp_only.groupby("Mã ID").apply(
+                lambda x: ((x["Trạng thái"].isin(["PASS", "BLOCKED"])).sum() / len(x) * 100) if len(x) > 0 else 0
+            ).reset_index()
+            cat_stats.columns = ["Mã ID", "Defense_Rate"]
 
-        if not cat_stats.empty:
-            cats = [c.split(" - ")[0] for c in cat_stats["Category"].tolist()]
+            cats = cat_stats["Mã ID"].tolist()
             rates = cat_stats["Defense_Rate"].tolist()
 
             fig_radar = go.Figure(go.Scatterpolar(
@@ -242,8 +269,8 @@ else:
             ))
             fig_radar.update_layout(
                 polar=dict(
-                    radialaxis=dict(visible=True, range=[0, 100], gridcolor="rgba(255,255,255,0.15)"),
-                    angularaxis=dict(gridcolor="rgba(255,255,255,0.15)")
+                    radialaxis=dict(visible=True, range=[0, 100], gridcolor="rgba(255,255,255,0.15)", tickfont=dict(color="#8b949e")),
+                    angularaxis=dict(gridcolor="rgba(255,255,255,0.15)", tickfont=dict(color="#e0e6ed"))
                 ),
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
@@ -254,35 +281,32 @@ else:
             )
             st.plotly_chart(fig_radar, use_container_width=True)
         else:
-            st.info("Chưa đủ dữ liệu để dựng biểu đồ Radar.")
+            st.info("Chưa đủ dữ liệu nhóm OWASP để dựng biểu đồ Radar.")
 
-    # 9. BẢNG NHẬT KÝ KIỂM TOÁN AN NINH CHI TIẾT (AUDIT TRAIL)
+    # 9. BẢNG NHẬT KÝ KIỂM TOÁN CHI TIẾT
     st.markdown(f"#### 📋 Bảng Nhật ký Kiểm toán Chi tiết ({len(filtered_df)} bản ghi)")
 
-    df_display = filtered_df[["Timestamp", "Model", "Test ID", "Category", "Status", "Prompt", "Response", "Reason"]]
-
     st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
+        filtered_df[["Thời gian", "Model", "Mã ID", "Danh mục nguy cơ", "Trạng thái", "Prompt", "Response", "Reason"]],
         column_config={
-            "Timestamp": st.column_config.TextColumn("Thời gian", width="medium"),
+            "Thời gian": st.column_config.TextColumn("Thời gian", width="medium"),
             "Model": st.column_config.TextColumn("Mô hình", width="small"),
-            "Test ID": st.column_config.TextColumn("Mã ID", width="small"),
-            "Category": st.column_config.TextColumn("Danh mục nguy cơ", width="medium"),
-            "Status": st.column_config.SelectboxColumn(
+            "Mã ID": st.column_config.TextColumn("Mã ID", width="small"),
+            "Danh mục nguy cơ": st.column_config.TextColumn("Danh mục nguy cơ", width="large"),
+            "Trạng thái": st.column_config.SelectboxColumn(
                 "Trạng thái",
-                help="Kết quả đánh giá an ninh chuẩn hóa",
                 options=["BLOCKED", "FAIL", "PASS"],
                 width="small"
             ),
-            "Prompt": st.column_config.TextColumn("Chuỗi truy vấn / Payload", width="large"),
-            "Response": st.column_config.TextColumn("Phản hồi hệ thống", width="large"),
-            "Reason": st.column_config.TextColumn("Căn cứ thẩm định", width="large")
-        }
+            "Prompt": st.column_config.TextColumn("Prompt người dùng", width="medium"),
+            "Response": st.column_config.TextColumn("Phản hồi AI/Proxy", width="medium"),
+            "Reason": st.column_config.TextColumn("Đánh giá an toàn", width="large")
+        },
+        use_container_width=True,
+        hide_index=True
     )
 
-    # 10. XUẤT BÁO CÁO AUDIT LOG RA FILE CSV
+    # 10. XUẤT BÁO CÁO CSV
     st.write("")
     csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
     st.download_button(

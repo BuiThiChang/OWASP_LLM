@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A06:2025 - Insecure Design"
+TITLE = "A06:2026- Insecure Design"
 FLAG = "FLAG{business_logic_bypassed}"
 
 DENY_PATTERNS = [

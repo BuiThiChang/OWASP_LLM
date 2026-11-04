@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A05:2025 - Injection (SQLi, Command, Prompt Injection)"
+TITLE = "A05:2026- Injection (SQLi, Command, Prompt Injection)"
 FLAG = "FLAG{rce_sqli_injection_pwned}"
 
 DENY_PATTERNS = [

@@ -1,6 +1,6 @@
 import re
 
-TITLE = "A10:2025 - Mishandling of Exceptional Conditions"
+TITLE = "A10:2026- Mishandling of Exceptional Conditions"
 FLAG = "FLAG{unhandled_exception_crash}"
 
 DENY_PATTERNS = [

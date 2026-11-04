@@ -3,7 +3,7 @@ FILE: proxy_server.py
 Mô tả: Tường lửa AI Guardrail Proxy (Cổng 11435).
 - Tích hợp quét tệp/ảnh (Indirect Prompt Injection) qua /api/scan-file
 - Đẩy mẫu payload độc hại vào Threat Intelligence DB
-- Chặn lọc 10 nhóm OWASP LLM (kế thừa từ challenges/ và security_engine)
+- Chặn lọc 10 nhóm OWASP 2026 (A01 -> A10) chuẩn hóa đồng nhất
 - Chuẩn hóa đầu ra 3 trạng thái: BLOCKED | FAIL | PASS
 - Hỗ trợ cả Streaming (SSE) và chuẩn OpenAI/Ollama, chống lỗi trắng khung chat
 """
@@ -17,9 +17,9 @@ from datetime import datetime
 from fastapi import FastAPI, Request, File, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from db_manager import get_db_connection, save_result
 
 # 1. IMPORT CSDL & THREAT INTEL
-from db_manager import save_result
 try:
     from db_manager import save_or_update_threat_intel
 except ImportError:
@@ -32,10 +32,15 @@ except ImportError:
     def extract_text_from_file(file_bytes, filename):
         return file_bytes.decode("utf-8", errors="ignore")
 
-# 3. IMPORT ENGINE BẢO MẬT TRUNG TÂM
-from security_engine import evaluate_owasp_top_10, evaluate_full_cycle, evaluate_with_llm_judge
+# 3. IMPORT ENGINE BẢO MẬT & HÀM CHUẨN HÓA DANH MỤC
+from security_engine import (
+    evaluate_owasp_top_10, 
+    evaluate_full_cycle, 
+    evaluate_with_llm_judge,
+    normalize_to_owasp_2026
+)
 
-app = FastAPI(title="AI Security Guardrail Proxy - Unified Engine", version="2.5")
+app = FastAPI(title="AI Security Guardrail Proxy - Unified Engine", version="2.6")
 
 # BẬT CORS MIDDLEWARE
 app.add_middleware(
@@ -114,7 +119,6 @@ async def scan_multimodal_file(file: UploadFile = File(...)):
     # BƯỚC 1: Bóc tách chữ từ ảnh/tệp
     extracted_text = extract_text_from_file(file_bytes, filename)
     
-    # Nếu không lấy được chữ nào từ ảnh
     if not extracted_text or not extracted_text.strip():
         return JSONResponse(status_code=400, content={
             "status": "FAIL",
@@ -124,19 +128,20 @@ async def scan_multimodal_file(file: UploadFile = File(...)):
 
     print(f"\n🔍 [OCR THÀNH CÔNG - {filename}]: Nội dung bóc tách được:\n'{extracted_text}'\n")
 
-    # BƯỚC 2: Đưa chữ đã bóc tách vào thẩm định thuật toán bảo mật OWASP Top 10
+    # BƯỚC 2: Thẩm định an toàn
     eval_res = evaluate_owasp_top_10(extracted_text, SECRET)
     
-    # BƯỚC 3: Nếu phát hiện câu lệnh vi phạm trong ảnh -> CHẶN
+    # BƯỚC 3: Xử lý theo chuẩn mã OWASP 2026 (A05: Injection)
     if eval_res.get("status") in ["BLOCKED", "FAIL"]:
         block_reason = eval_res.get("reason", "Phát hiện chỉ thị tấn công Indirect Prompt Injection ẩn trong ảnh.")
-        category_name = eval_res.get("category", "Indirect Prompt Injection")
+        raw_cat = eval_res.get("category", "A05:2026 - Injection")
+        clean_id, clean_cat = normalize_to_owasp_2026("A05", raw_cat)
         
         save_result(
             model="multimodal-ocr",
-            test_id="OCR-BLOCKED",
-            category=category_name,
-            name=f"Image Scan: {filename}",
+            test_id=clean_id,
+            category=clean_cat,
+            name=f"Quét tệp: {filename}",
             prompt=extracted_text[:400],
             response="[BLOCKED BY SECURITY FIREWALL]",
             status="BLOCKED",
@@ -146,15 +151,15 @@ async def scan_multimodal_file(file: UploadFile = File(...)):
             "status": "BLOCKED",
             "filename": filename,
             "reason": block_reason,
-            "extracted_text_preview": extracted_text  # Trả về toàn bộ chữ để hiển thị lên màn hình
+            "extracted_text_preview": extracted_text
         })
 
-    # BƯỚC 4: Nếu chữ trong ảnh an toàn -> CHO QUA (PASS)
+    # BƯỚC 4: Nếu chữ trong ảnh an toàn -> PASS
     save_result(
         model="multimodal-ocr",
-        test_id="OCR-PASSED",
-        category="General",
-        name=f"Image Scan: {filename}",
+        test_id="SAFE",
+        category="An toàn / Nghiệp vụ Hợp lệ",
+        name=f"Quét tệp: {filename}",
         prompt=extracted_text[:400],
         response="[CLEAN FILE]",
         status="PASS",
@@ -188,48 +193,45 @@ async def security_proxy(request: Request):
 
     print(f"\n🔍 [PROXY KIỂM DUYỆT]: '{user_prompt}'")
 
-    # BƯỚC 1: KIỂM TRA ĐẦU VÀO (QUÉT 10 MODULE CHALLENGES/)
+    # BƯỚC 1: KIỂM TRA ĐẦU VÀO (CHỈ DÙNG RULE ENGINE NHANH, KHÔNG CHẶN NHẦM)
     firewall_eval = evaluate_owasp_top_10(user_prompt, SECRET)
     is_violation = False
     block_reason = ""
-    category_name = "OWASP Violation"
+    raw_category = "A05:2026 - Injection"
+    raw_test_id = "A05"
 
     if firewall_eval and firewall_eval.get("status") in ["BLOCKED", "FAIL"]:
         is_violation = True
         block_reason = firewall_eval.get("reason", "Phát hiện chỉ thị nguy hiểm.")
-        category_name = firewall_eval.get("category", category_name)
-    else:
-        # Nếu rule-based chưa chắc chắn, có thể kiểm tra thêm bằng Judge
-        judge_eval = evaluate_with_llm_judge(model_name, user_prompt, "[User Input Pre-check]")
-        if judge_eval and judge_eval.get("status") == "FAIL":
-            is_violation = True
-            block_reason = judge_eval.get("reason", "Phát hiện hành vi tấn công qua phân tích ngữ nghĩa.")
+        raw_category = firewall_eval.get("category", raw_category)
+        raw_test_id = firewall_eval.get("test_id", "A05")
 
     target_endpoint = request.url.path
     current_time_str = datetime.utcnow().isoformat() + "Z"
 
     # BƯỚC 2: XỬ LÝ VI PHẠM (TRẠNG THÁI: BLOCKED)
     if is_violation:
-        print(f"🚨 [BLOCKED - {category_name}]: {block_reason}")
-        blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL]**\n\n❌ **Nhóm lỗi:** {category_name}\n🔒 **Lý do:** {block_reason}"
+        clean_id, clean_category = normalize_to_owasp_2026(raw_test_id, raw_category)
+        
+        print(f"🚨 [BLOCKED - {clean_category}]: {block_reason}")
+        blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL]**\n\n❌ **Nhóm lỗi:** {clean_category}\n🔒 **Lý do:** {block_reason}"
 
-        # 1. Ghi log chuẩn trạng thái BLOCKED
         try:
             save_result(
                 model=model_name,
-                test_id="PROXY-BLOCKED",
-                category=category_name,
+                test_id=clean_id,
+                category=clean_category,
                 name="AI Guardrail Proxy",
                 prompt=user_prompt,
-                response=blocked_message,
+                response="[BLOCKED BY SECURITY FIREWALL]",
                 status="BLOCKED",
                 reason=block_reason
             )
-            # 2. Cập nhật Threat Intelligence
+
             save_or_update_threat_intel(
                 attack_payload=user_prompt,
-                vector_type=category_name,
-                owasp_category=category_name,
+                vector_type=clean_category,
+                owasp_category=clean_category,
                 detected_source="BLUE_TEAM",
                 detector_rule="AI Guardrail Proxy Firewall",
                 tactics_desc=f"Truy vấn bị chặn tại Tường lửa. Lý do: {block_reason}"
@@ -237,7 +239,6 @@ async def security_proxy(request: Request):
         except Exception as e:
             print(f"⚠️ Lỗi ghi CSDL: {e}")
 
-        # Trả về phản hồi cấu trúc chuẩn chống trắng màn hình
         if is_stream:
             return StreamingResponse(
                 fake_sse_stream(blocked_message, model_name),
@@ -274,7 +275,6 @@ async def security_proxy(request: Request):
     # BƯỚC 3: AN TOÀN -> CHUYỂN TIẾP TỚI OLLAMA THẬT (CỔNG 11436)
     print("✅ [SAFE INPUT]: Chuyển tiếp tới Ollama Core (11436)...")
     try:
-        # Tắt stream backend nếu gọi OpenAI tĩnh để bóc tách thẩm định an toàn
         if "/v1/" in target_endpoint:
             body["stream"] = False
 
@@ -287,7 +287,6 @@ async def security_proxy(request: Request):
 
         if resp.status_code == 200:
             if is_stream:
-                # Xử lý trả về dòng trực tiếp nếu Client yêu cầu stream
                 return StreamingResponse(
                     resp.iter_content(chunk_size=1024),
                     media_type=resp.headers.get("content-type", "text/event-stream")
@@ -306,22 +305,23 @@ async def security_proxy(request: Request):
                 if not ai_response_text and "response" in resp_data:
                     ai_response_text = str(resp_data["response"])
 
-            # Thẩm định đầu ra (phát hiện lộ cờ, secret key, XSS)
+            # Thẩm định đầu ra toàn chu trình (KẾT HỢP CẢ AI JUDGE)
             verdict, audit_reason = evaluate_full_cycle(
-                category_code="General",
+                category_code="SAFE",
                 prompt=user_prompt,
                 response_text=ai_response_text,
                 status_code=200,
-                secret=SECRET
+                secret=SECRET,
+                model_name=model_name
             )
 
             # Ghi log chuẩn trạng thái: PASS hoặc FAIL
             try:
                 save_result(
                     model=model_name,
-                    test_id="OLLAMA-LIVE",
-                    category="Live Interaction",
-                    name="User Chat Session",
+                    test_id="SAFE" if verdict == "PASS" else "A05",
+                    category="An toàn / Nghiệp vụ Hợp lệ" if verdict == "PASS" else "A05:2026 - Injection",
+                    name="Truy vấn Chatbot Trực tiếp",
                     prompt=user_prompt,
                     response=ai_response_text,
                     status=verdict,
