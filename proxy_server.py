@@ -50,8 +50,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-REAL_OLLAMA_URL = "http://localhost:11436"
+import os
+REAL_OLLAMA_URL = os.getenv("OLLAMA_CORE_URL", "http://localhost:11436").rstrip("/")
 SECRET = "OWASP-LLM-TEST-2026-7F3A9C"
 
 @app.middleware("http")

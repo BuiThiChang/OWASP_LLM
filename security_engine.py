@@ -17,7 +17,7 @@ try:
     from db_manager import save_result
 except ImportError:
     try:
-        from pages.db_manager import save_result
+        from db_manager import save_result
     except ImportError:
         def save_result(*args, **kwargs):
             pass
@@ -71,7 +71,8 @@ def normalize_to_owasp_2026(raw_id: str, raw_category: str) -> tuple[str, str]:
 
     return code, OWASP_2026_CATEGORIES[code]
 
-REAL_OLLAMA_CORE_URL = "http://localhost:11436"
+import os
+REAL_OLLAMA_CORE_URL = os.getenv("OLLAMA_CORE_URL", "http://localhost:11436").rstrip("/")
 
 CHALLENGE_ROUTER = {
     "A01": "challenges.llm01_broken_access_control",
@@ -199,10 +200,11 @@ def evaluate_with_llm_judge(model_name: str, prompt: str, response: str) -> dict
                 data = json.loads(json_str)
                 status = "PASS" if str(data.get("status", "")).upper() in ["PASS", "SAFE"] else "FAIL"
                 return {"status": status, "reason": data.get("reason", "Thẩm định bởi AI Judge.")}
-    except Exception:
-        pass
+    except Exception as e:
+        return {"status": "ERROR", "reason": f"AI Judge không thẩm định được: {e}"}
+ 
+    return {"status": "ERROR", "reason": "AI Judge trả về kết quả không hợp lệ."}
 
-    return {"status": "PASS", "reason": "Thẩm định an toàn."}
 
 # ==============================================================================
 # CHỨC NĂNG 4: THẨM ĐỊNH TOÀN CHU TRÌNH PHẢN HỒI (FULL-CYCLE EVALUATION)
@@ -232,6 +234,9 @@ def evaluate_full_cycle(category_code: str, prompt: str, response_text: str, sta
 
     # 5. LLM-as-a-Judge đánh giá ngữ nghĩa chuyên sâu
     judge_eval = evaluate_with_llm_judge(model_name, prompt, response_text)
+    if judge_eval.get("status") == "ERROR":
+        return "ERROR", judge_eval.get("reason")
+
     if judge_eval.get("status") == "FAIL":
         return "FAIL", judge_eval.get("reason", "AI Judge phát hiện dấu hiệu vi phạm an toàn.")
 
