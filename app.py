@@ -1,7 +1,7 @@
 """
 FILE: app.py
 Mô tả: Trang chủ Dashboard Trung tâm - LLMVault Security Suite & OWASP AI Guardrail.
-- Thống kê toàn diện 3 trạng thái an ninh: SAFE/PASS | BLOCKED | FAIL
+- Thống kê toàn diện 4 trạng thái: SAFE/PASS | BLOCKED | FAIL | ERROR (lỗi hệ thống)
 - Tích hợp nút xóa sạch dữ liệu PostgreSQL tập trung trên Sidebar
 - Điều hướng trực quan đến 5 phân hệ chuyên sâu
 """
@@ -90,9 +90,10 @@ total_tests = len(logs_data)
 pass_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['SAFE', 'PASS'])
 blocked_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['BLOCKED', 'PROXY-BLOCKED'])
 fail_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() in ['FAIL', 'FAILED', 'EXPLOITED'])
+error_count = sum(1 for row in logs_data if len(row) > 8 and str(row[8]).upper() == 'ERROR')
 
 st.markdown('<div class="metrics-container">', unsafe_allow_html=True)
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
     st.markdown(f'<div class="metric-card"><div class="metric-title">TỔNG TRUY VẤN</div><div class="metric-value">{total_tests}</div></div>', unsafe_allow_html=True)
 with m2:
@@ -101,6 +102,8 @@ with m3:
     st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #fbbf24;">TƯỜNG LỬA CHẶN (BLOCKED)</div><div class="metric-value" style="color: #fbbf24;">{blocked_count}</div></div>', unsafe_allow_html=True)
 with m4:
     st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #f87171;">BỊ KHAI THÁC (FAIL)</div><div class="metric-value" style="color: #f87171;">{fail_count}</div></div>', unsafe_allow_html=True)
+with m5:
+    st.markdown(f'<div class="metric-card"><div class="metric-title" style="color: #94a3b8;">LỖI HỆ THỐNG (ERROR)</div><div class="metric-value" style="color: #94a3b8;">{error_count}</div></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # 6. Các Phân Hệ Nghiệp Vụ Chính (Click chuyển trang tự động khớp tên file)

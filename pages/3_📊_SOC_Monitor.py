@@ -2,7 +2,7 @@
 FILE: pages/3_soc_monitor.py
 Mô tả: Module 03 - Trung tâm Giám sát An ninh (SOC Monitor & Audit Trail).
 - Chuẩn hóa cột thời gian từ Epoch Unix sang DD/MM/YYYY HH:MM:SS
-- Đồng bộ CSDL chuẩn 3 trạng thái: BLOCKED | FAIL | PASS
+- Đồng bộ CSDL chuẩn 4 trạng thái: BLOCKED | FAIL | PASS | ERROR (lỗi hệ thống, không tính vào tỷ lệ phòng thủ)
 - Tự động chuẩn hóa toàn bộ mã ID và danh mục theo OWASP 2026 (A01 -> A10)
 - Trực quan hóa ma trận rủi ro qua Biểu đồ Radar và Pie Chart
 """
@@ -120,24 +120,33 @@ else:
     df["Mã ID"] = [p[0] for p in normalized_pairs]
     df["Danh mục nguy cơ"] = [p[1] for p in normalized_pairs]
 
-    # Chuẩn hóa trạng thái về 3 trạng thái duy nhất
+    # Chuẩn hóa trạng thái về 4 trạng thái: BLOCKED | FAIL | PASS | ERROR
     def normalize_status(val):
         s = str(val).upper().strip()
         if s in ["BLOCKED", "PROXY-BLOCKED"]:
             return "BLOCKED"
         elif s in ["FAIL", "FAILED", "EXPLOITED", "VULNERABLE"]:
             return "FAIL"
+        elif s == "ERROR":
+            return "ERROR"
         else:
             return "PASS"
 
     df["Trạng thái"] = df["Status"].apply(normalize_status)
+
+    # Ca lỗi hệ thống không thuộc nhóm OWASP nào (tránh bị gán mặc định vào A05)
+    is_error = df["Trạng thái"] == "ERROR"
+    df.loc[is_error, "Mã ID"] = "ERROR"
+    df.loc[is_error, "Danh mục nguy cơ"] = "Lỗi hệ thống / AI Judge"
 
     # 6. KHUNG CHỈ SỐ THỐNG KÊ TỔNG QUAN (KPI METRIC CARDS)
     total_count = len(df)
     pass_count = (df["Trạng thái"] == "PASS").sum()
     fail_count = (df["Trạng thái"] == "FAIL").sum()
     blocked_count = (df["Trạng thái"] == "BLOCKED").sum()
-    defense_rate = ((pass_count + blocked_count) / total_count * 100) if total_count > 0 else 100.0
+    error_count = (df["Trạng thái"] == "ERROR").sum()
+    valid_count = total_count - error_count
+    defense_rate = ((pass_count + blocked_count) / valid_count * 100) if valid_count > 0 else 100.0
 
     c_m1, c_m2, c_m3, c_m4, c_m5 = st.columns(5)
     with c_m1:
@@ -145,6 +154,7 @@ else:
             <div class="summary-card">
                 <div class="card-title">TỔNG SỰ KIỆN GHI NHẬN</div>
                 <div class="card-num" style="color: #e2e8f0;">{total_count}</div>
+                <div style="font-size: 0.75rem; color: #94a3b8;">trong đó lỗi hệ thống (ERROR): {error_count}</div>
             </div>
         ''', unsafe_allow_html=True)
     with c_m2:
@@ -183,7 +193,7 @@ else:
     f_col1, f_col2, f_col3, f_col4 = st.columns([1, 1.2, 1, 1.8])
 
     with f_col1:
-        status_options = ["BLOCKED", "FAIL", "PASS"]
+        status_options = ["BLOCKED", "FAIL", "PASS", "ERROR"]
         status_filter = st.multiselect("Lọc trạng thái:", options=status_options, default=status_options)
 
     with f_col2:
@@ -224,7 +234,8 @@ else:
         color_mapping = {
             "BLOCKED": "#fbbf24",
             "FAIL": "#ef4444",
-            "PASS": "#10b981"
+            "PASS": "#10b981",
+            "ERROR": "#94a3b8"
         }
         
         fig_pie = px.pie(
@@ -247,8 +258,8 @@ else:
     with col_chart_right:
         st.markdown("##### 🛡️ Vùng Đề kháng An ninh theo 10 Nhóm OWASP 2026")
         
-        # Chỉ tính tỷ lệ trên các nhóm A01 -> A10
-        owasp_only = filtered_df[filtered_df["Mã ID"].str.startswith("A", na=False)]
+        # Chỉ tính tỷ lệ trên các nhóm A01 -> A10, bỏ qua ca lỗi hệ thống
+        owasp_only = filtered_df[filtered_df["Mã ID"].str.startswith("A", na=False) & (filtered_df["Trạng thái"] != "ERROR")]
         
         if not owasp_only.empty:
             cat_stats = owasp_only.groupby("Mã ID").apply(
@@ -295,7 +306,7 @@ else:
             "Danh mục nguy cơ": st.column_config.TextColumn("Danh mục nguy cơ", width="large"),
             "Trạng thái": st.column_config.SelectboxColumn(
                 "Trạng thái",
-                options=["BLOCKED", "FAIL", "PASS"],
+                options=["BLOCKED", "FAIL", "PASS", "ERROR"],
                 width="small"
             ),
             "Prompt": st.column_config.TextColumn("Prompt người dùng", width="medium"),

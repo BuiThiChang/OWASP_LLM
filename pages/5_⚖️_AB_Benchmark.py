@@ -173,6 +173,9 @@ if st.button("🔥 BẮT ĐẦU CHẠY BENCHMARK ĐỐI CHỨNG (RUN A/B AUDIT)"
                 status_code=status_code_proxy,
                 secret=SECRET_KEY
             )
+            # Lỗi HTTP (khác 200/403) hoặc phản hồi rỗng: không đủ căn cứ kết luận PASS/FAIL
+            if status_code_proxy not in (200, 403) or not text_proxy.strip():
+                verdict_proxy = "ERROR"
 
             records.append({
                 "id": cid,
@@ -201,98 +204,103 @@ if st.session_state.benchmark_results is not None:
     valid = df[(df["status_direct"] != "ERROR") & (df["status_proxy"] != "ERROR")]
     errors = len(df) - len(valid)
     total_tests = len(valid)
-    # các chỉ số fail_direct, fail_proxy, mitigation_rate tính trên "valid"
+    # Mọi chỉ số và biểu đồ chỉ tính trên các ca hợp lệ ("valid"), không tính ca lỗi hệ thống
 
-
-    fail_direct = (df["status_direct"] == "FAIL").sum()
-    fail_proxy = (df["status_proxy"] == "FAIL").sum()
+    fail_direct = (valid["status_direct"] == "FAIL").sum()
+    fail_proxy = (valid["status_proxy"] == "FAIL").sum()
 
     vuln_rate_direct = (fail_direct / total_tests * 100) if total_tests > 0 else 0
     vuln_rate_proxy = (fail_proxy / total_tests * 100) if total_tests > 0 else 0
 
-    mitigated_count = len(df[(df["status_direct"] == "FAIL") & (df["status_proxy"].isin(["BLOCKED", "PASS"]))])
+    mitigated_count = len(valid[(valid["status_direct"] == "FAIL") & (valid["status_proxy"].isin(["BLOCKED", "PASS"]))])
     mitigation_rate = (mitigated_count / fail_direct * 100) if fail_direct > 0 else 100.0
 
-    avg_lat_direct = df["latency_direct"].mean()
-    avg_lat_proxy = df["latency_proxy"].mean()
+    avg_lat_direct = valid["latency_direct"].mean() if total_tests > 0 else 0.0
+    avg_lat_proxy = valid["latency_proxy"].mean() if total_tests > 0 else 0.0
     overhead_ms = max(0.0, (avg_lat_proxy - avg_lat_direct) * 1000)
 
     st.markdown("### 📊 Các Chỉ Số Định Lượng Thực Nghiệm (Live Calculated Metrics)")
+    if errors > 0:
+        st.warning(f"⚠️ Có {errors}/{len(df)} kịch bản gặp lỗi hệ thống (ERROR: mất kết nối Ollama/Proxy hoặc AI Judge không thẩm định được) và đã bị loại khỏi các chỉ số bên dưới.")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("TỔNG KỊCH BẢN THỬ NGHIỆM", f"{total_tests} Cases")
+    m1.metric("TỔNG KỊCH BẢN THỬ NGHIỆM", f"{total_tests} Cases", delta=f"{errors} ca lỗi bị loại", delta_color="off")
     m2.metric("TỶ LỆ LỖ HỔNG (BASELINE)", f"{vuln_rate_direct:.1f}%", delta=f"{fail_direct}/{total_tests} ca phơi nhiễm", delta_color="inverse")
     m3.metric("TỶ LỆ LỖ HỔNG (CÓ PROXY)", f"{vuln_rate_proxy:.1f}%", delta=f"-{vuln_rate_direct - vuln_rate_proxy:.1f}% Rủi ro", delta_color="normal")
-    m4.metric("HIỆU SUẤT TRIỆT TIÊU", f"{mitigation_rate:.1f}%", delta=f"Độ trễ trung bình +{overhead_ms:.1f}ms", delta_color="normal")
+    # Không có ca nào bị khai thác ở baseline thì không có gì để "triệt tiêu" -> N/A, không ghi 100%
+    m4.metric("HIỆU SUẤT TRIỆT TIÊU", f"{mitigation_rate:.1f}%" if fail_direct > 0 else "N/A", delta=f"Độ trễ trung bình +{overhead_ms:.1f}ms", delta_color="normal")
 
     st.write("")
 
     # BIỂU ĐỒ ĐỐI SÁNH
-    c_chart1, c_chart2 = st.columns(2)
+    if valid.empty:
+        st.info("Không có kịch bản hợp lệ để dựng biểu đồ (tất cả đều ERROR). Kiểm tra kết nối Ollama rồi chạy lại.")
+    else:
+        c_chart1, c_chart2 = st.columns(2)
 
-    with c_chart1:
-        cat_stats = df.groupby("short_code").apply(lambda x: pd.Series({
-            "fail_direct": (x["status_direct"] == "FAIL").sum() / len(x) * 100,
-            "fail_proxy": (x["status_proxy"] == "FAIL").sum() / len(x) * 100
-        })).reset_index()
+        with c_chart1:
+            cat_stats = valid.groupby("short_code").apply(lambda x: pd.Series({
+                "fail_direct": (x["status_direct"] == "FAIL").sum() / len(x) * 100,
+                "fail_proxy": (x["status_proxy"] == "FAIL").sum() / len(x) * 100
+            })).reset_index()
 
-        fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(
-            x=cat_stats["short_code"],
-            y=cat_stats["fail_direct"],
-            name="Không Tường lửa (FAIL %)",
-            marker_color="#ef4444"
-        ))
-        fig_bar.add_trace(go.Bar(
-            x=cat_stats["short_code"],
-            y=cat_stats["fail_proxy"],
-            name="Có Tường lửa (FAIL %)",
-            marker_color="#10b981"
-        ))
-        fig_bar.update_layout(
-            title="Tỷ lệ Bị khai thác (FAIL %) theo Mã OWASP 2026",
-            barmode="group",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(17,24,39,0.7)",
-            font=dict(color="#e5e7eb"),
-            yaxis=dict(title="% Thủng phòng thủ", range=[0, 105]),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
+                x=cat_stats["short_code"],
+                y=cat_stats["fail_direct"],
+                name="Không Tường lửa (FAIL %)",
+                marker_color="#ef4444"
+            ))
+            fig_bar.add_trace(go.Bar(
+                x=cat_stats["short_code"],
+                y=cat_stats["fail_proxy"],
+                name="Có Tường lửa (FAIL %)",
+                marker_color="#10b981"
+            ))
+            fig_bar.update_layout(
+                title="Tỷ lệ Bị khai thác (FAIL %) theo Mã OWASP 2026",
+                barmode="group",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(17,24,39,0.7)",
+                font=dict(color="#e5e7eb"),
+                yaxis=dict(title="% Thủng phòng thủ", range=[0, 105]),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-    with c_chart2:
-        safe_direct = [100 - v for v in cat_stats["fail_direct"]]
-        safe_proxy = [100 - v for v in cat_stats["fail_proxy"]]
-        labels = cat_stats["short_code"].tolist()
+        with c_chart2:
+            safe_direct = [100 - v for v in cat_stats["fail_direct"]]
+            safe_proxy = [100 - v for v in cat_stats["fail_proxy"]]
+            labels = cat_stats["short_code"].tolist()
 
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(
-            r=safe_direct + [safe_direct[0]],
-            theta=labels + [labels[0]],
-            fill="toself",
-            name="Đề kháng khi KHÔNG có Tường lửa",
-            line_color="#ef4444",
-            fillcolor="rgba(239, 68, 68, 0.2)"
-        ))
-        fig_radar.add_trace(go.Scatterpolar(
-            r=safe_proxy + [safe_proxy[0]],
-            theta=labels + [labels[0]],
-            fill="toself",
-            name="Đề kháng khi CÓ Tường lửa Proxy",
-            line_color="#10b981",
-            fillcolor="rgba(16, 185, 129, 0.35)"
-        ))
-        fig_radar.update_layout(
-            title="Biểu đồ Vùng Đề kháng An ninh (Robustness %)",
-            polar=dict(
-                radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(color="#8b949e")),
-                angularaxis=dict(tickfont=dict(color="#e0e6ed")),
-                bgcolor="rgba(17,24,39,0.7)"
-            ),
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e5e7eb"),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-        )
-        st.plotly_chart(fig_radar, use_container_width=True)
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=safe_direct + [safe_direct[0]],
+                theta=labels + [labels[0]],
+                fill="toself",
+                name="Đề kháng khi KHÔNG có Tường lửa",
+                line_color="#ef4444",
+                fillcolor="rgba(239, 68, 68, 0.2)"
+            ))
+            fig_radar.add_trace(go.Scatterpolar(
+                r=safe_proxy + [safe_proxy[0]],
+                theta=labels + [labels[0]],
+                fill="toself",
+                name="Đề kháng khi CÓ Tường lửa Proxy",
+                line_color="#10b981",
+                fillcolor="rgba(16, 185, 129, 0.35)"
+            ))
+            fig_radar.update_layout(
+                title="Biểu đồ Vùng Đề kháng An ninh (Robustness %)",
+                polar=dict(
+                    radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(color="#8b949e")),
+                    angularaxis=dict(tickfont=dict(color="#e0e6ed")),
+                    bgcolor="rgba(17,24,39,0.7)"
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e5e7eb"),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+            )
+            st.plotly_chart(fig_radar, use_container_width=True)
 
     # BẢNG SO SÁNH CHI TIẾT
     st.markdown("### 📋 Bảng Đối Soát Kết Quả Chi Tiết (Audit Diff)")

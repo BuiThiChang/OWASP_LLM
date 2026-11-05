@@ -315,12 +315,13 @@ async def security_proxy(request: Request):
                 model_name=model_name
             )
 
-            # Ghi log chuẩn trạng thái: PASS hoặc FAIL
+            # Ghi log chuẩn trạng thái: PASS | FAIL | ERROR
             try:
                 save_result(
                     model=model_name,
-                    test_id="SAFE" if verdict == "PASS" else "A05",
-                    category="An toàn / Nghiệp vụ Hợp lệ" if verdict == "PASS" else "A05:2026 - Injection",
+                    test_id={"PASS": "SAFE", "FAIL": "A05"}.get(verdict, "ERROR"),
+                    category={"PASS": "An toàn / Nghiệp vụ Hợp lệ",
+                              "FAIL": "A05:2026 - Injection"}.get(verdict, "Lỗi hệ thống / AI Judge"),
                     name="Truy vấn Chatbot Trực tiếp",
                     prompt=user_prompt,
                     response=ai_response_text,
@@ -346,6 +347,10 @@ async def security_proxy(request: Request):
                 return JSONResponse(status_code=200, content=formatted_resp)
 
             return JSONResponse(status_code=200, content=resp_data)
+
+        # Ollama trả về lỗi (khác 200): báo lỗi rõ ràng thay vì trả về null
+        print(f"❌ [OLLAMA BÁO LỖI HTTP {resp.status_code}]: {resp.text[:200]}")
+        return JSONResponse(status_code=502, content={"error": f"Ollama Core trả về lỗi HTTP {resp.status_code}: {resp.text[:500]}"})
 
     except Exception as e:
         print(f"❌ [LỖI KẾT NỐI BACKEND]: {e}")

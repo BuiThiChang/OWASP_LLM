@@ -274,6 +274,8 @@ if mode == "🧪 Live theo từng Lab (Mô phỏng Challenges)":
                                         tactics_desc=f"Khai thác thành công bài lab {cat_code}. Lý do: {reason}"
                                     )
                                 except Exception: pass
+                            elif status == "ERROR":
+                                formatted_response = f"⚠️ **[ERROR – chưa thẩm định được]**\n\n{raw_response}\n\n📌 **Lý do:** {reason}"
                             else:
                                 formatted_response = f"🟢 **[PASS]**\n\n{raw_response}\n\n📌 **Đánh giá:** {reason}"
 
@@ -393,11 +395,17 @@ else:
                         status_code=status_code,
                         secret=SECRET_KEY
                     )
+                    # Lỗi HTTP (khác 200/403) hoặc phản hồi rỗng: không đủ căn cứ kết luận PASS/FAIL
+                    if status_code not in (200, 403) or not raw_body.strip():
+                        status = "ERROR"
+                        reason = "Lỗi hệ thống: không nhận được phản hồi hợp lệ từ Proxy/Ollama."
 
                     if status == "BLOCKED":
                         bot_response = f"🚨 **[BLOCKED BY FIREWALL]**\n\n{raw_body}\n\n🔒 **Lý do:** {reason}"
                     elif status == "FAIL":
                         bot_response = f"❌ **[FAIL / EXPLOITED]**\n\n{raw_body}\n\n📌 **Lý do:** {reason}"
+                    elif status == "ERROR":
+                        bot_response = f"⚠️ **[ERROR – chưa thẩm định được]**\n\n{raw_body}\n\n📌 **Lý do:** {reason}"
                     else:
                         bot_response = f"🟢 **[PASS]**\n\n{raw_body}"
 

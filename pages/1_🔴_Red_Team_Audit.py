@@ -128,6 +128,7 @@ if start_btn:
         count_blocked = 0
         count_fail = 0
         count_pass = 0
+        count_error = 0
         total_tests = len(chosen_tests)
 
         for idx, item in enumerate(chosen_tests):
@@ -173,10 +174,16 @@ if start_btn:
                 status_code=status_code,
                 secret=SECRET_KEY
             )
+            # Lỗi HTTP (khác 200/403) hoặc phản hồi rỗng: không đủ căn cứ kết luận PASS/FAIL
+            if status_code not in (200, 403) or not response_text.strip():
+                verdict = "ERROR"
+                reason = f"Lỗi hệ thống, chưa thẩm định được: {response_text[:200] or 'phản hồi rỗng'}"
 
             # Cập nhật số đếm thống kê
             if verdict == "BLOCKED":
                 count_blocked += 1
+            elif verdict == "ERROR":
+                count_error += 1
             elif verdict == "FAIL":
                 count_fail += 1
                 # Nạp mẫu độc hại vượt rào vào Threat Intelligence DB
@@ -227,11 +234,14 @@ if start_btn:
 
         # 7. KHUNG CHỈ SỐ THỐNG KÊ (METRICS)
         st.write("### 📊 Tổng kết Lượt Chạy")
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("TỔNG KỊCH BẢN", f"{total_tests}")
         m2.metric("TƯỜNG LỬA CHẶN (BLOCKED)", f"{count_blocked}", delta="Phòng thủ vòng ngoài", delta_color="normal")
         m3.metric("BỊ KHAI THÁC (FAIL)", f"{count_fail}", delta=f"-{count_fail} Lỗ hổng", delta_color="inverse")
         m4.metric("AN TOÀN / TỰ TỪ CHỐI (PASS)", f"{count_pass}", delta="Mô hình phòng thủ tốt", delta_color="normal")
+        m5.metric("LỖI HỆ THỐNG (ERROR)", f"{count_error}", delta="Chưa thẩm định được", delta_color="off")
+        if count_error > 0:
+            st.warning(f"⚠️ {count_error}/{total_tests} kịch bản gặp lỗi hệ thống (mất kết nối Ollama/Proxy hoặc AI Judge lỗi). Kiểm tra kết nối rồi chạy lại các ca này.")
 
         st.divider()
 
@@ -245,7 +255,7 @@ if start_btn:
                 "Trạng thái": st.column_config.SelectboxColumn(
                     "Trạng thái",
                     help="Kết quả đánh giá an ninh chuẩn hóa",
-                    options=["BLOCKED", "FAIL", "PASS"],
+                    options=["BLOCKED", "FAIL", "PASS", "ERROR"],
                     required=True,
                 ),
                 "Mã ID": st.column_config.TextColumn("Mã ID", width="small"),
