@@ -83,15 +83,19 @@ else:
 
     # 5. Bảng hiển thị
     st.markdown(f"### 📋 Danh sách Mẫu Tấn công & Thủ đoạn ({len(filtered_df)})")
+    # Chỉ dùng các cột thực có trong bảng threat_intelligence (không có cột threat_id / severity_level)
+    show_cols = ['id', 'signature_hash', 'vector_type', 'Nhóm OWASP Chuẩn', 'attack_payload',
+                 'detected_source', 'detector_rule', 'occurrence_count', 'Xuất hiện gần nhất']
     st.dataframe(
-        filtered_df[['threat_id', 'vector_type', 'Nhóm OWASP Chuẩn', 'attack_payload', 'severity_level', 'detected_source', 'occurrence_count', 'Xuất hiện gần nhất']],
+        filtered_df[[c for c in show_cols if c in filtered_df.columns]],
         column_config={
-            "threat_id": st.column_config.TextColumn("ID", width="small"),
+            "id": st.column_config.NumberColumn("ID", width="small"),
+            "signature_hash": st.column_config.TextColumn("Chữ ký SHA-256", width="small"),
             "vector_type": st.column_config.TextColumn("Dạng Tấn công", width="medium"),
             "Nhóm OWASP Chuẩn": st.column_config.TextColumn("Nhóm OWASP 2026", width="large"),
             "attack_payload": st.column_config.TextColumn("Nội dung Payload", width="large"),
-            "severity_level": st.column_config.TextColumn("Mức độ", width="small"),
             "detected_source": st.column_config.TextColumn("Nguồn", width="small"),
+            "detector_rule": st.column_config.TextColumn("Luật phát hiện", width="medium"),
             "occurrence_count": st.column_config.NumberColumn("Số lần lặp", width="small"),
             "Xuất hiện gần nhất": st.column_config.TextColumn("Xuất hiện gần nhất", width="medium")
         },
