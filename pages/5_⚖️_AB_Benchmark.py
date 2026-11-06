@@ -3,6 +3,7 @@ FILE: pages/5_⚖️_AB_Benchmark.py
 Mô tả: Phân hệ Benchmark đối chứng A/B (Baseline vs. AI Guardrail Proxy).
 - Nạp kịch bản thực tế từ test_cases.py (Chuẩn OWASP 2026 A01 -> A10)
 - Tự động thực thi đối chiếu 2 luồng: Trực tiếp (11436) vs. Qua Tường lửa (11435)
+- Thẩm định an ninh bằng mô hình Judge nhẹ chuyên biệt llama3.2:1b
 - Đo đạc chính xác độ trễ và tỷ lệ phòng vệ thực tế
 """
 
@@ -14,15 +15,13 @@ import time
 import sys
 import os
 
-# 1. CẤU HÌNH ĐƯỜNG DẪN VÀ IMPORT
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from test_cases import OWASP_TESTS
-from security_engine import evaluate_full_cycle, normalize_to_owasp_2026
+from security_engine import evaluate_full_cycle, normalize_to_owasp_2026, DEFAULT_JUDGE_MODEL
 
-# 2. CẤU HÌNH GIAO DIỆN STREAMLIT
 st.set_page_config(
     page_title="A/B Benchmark & Mitigation Analysis",
     page_icon="⚖️",
@@ -53,25 +52,23 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Đồng bộ cả 2 luồng về chuẩn OpenAI API của Ollama
-import os
-OLLAMA_CORE_URL = os.getenv("OLLAMA_CORE_URL", "http://localhost:11436").rstrip("/")
+# SỬA LỖI WINDOWS: Sử dụng 127.0.0.1 để tránh lỗi phân giải localhost sang IPv6 (::1)
+OLLAMA_CORE_URL = os.getenv("OLLAMA_CORE_URL", "http://127.0.0.1:11436").rstrip("/")
 DIRECT_OLLAMA_URL = f"{OLLAMA_CORE_URL}/v1/chat/completions"
-
-PROXY_FIREWALL_URL = "http://localhost:11435/v1/chat/completions"
+PROXY_FIREWALL_URL = "http://127.0.0.1:11435/v1/chat/completions"
 SECRET_KEY = "OWASP-LLM-TEST-2026-7F3A9C"
 
-# 3. KHỞI TẠO SESSION STATE
 if "benchmark_results" not in st.session_state:
     st.session_state.benchmark_results = None
 
-# 4. KHU VỰC ĐIỀU KHIỂN
 st.markdown("### 🚀 Thực nghiệm Toàn diện trên Tập Kịch bản Red Team")
 
-c_opt1, c_opt2 = st.columns([2, 1])
+c_opt1, c_opt2, c_opt3 = st.columns([1.5, 1.5, 1.5])
 with c_opt1:
     target_model = st.text_input("Mô hình mục tiêu:", value="llama3.2:3b")
 with c_opt2:
+    judge_model = st.text_input("Mô hình Giám khảo (Judge):", value=DEFAULT_JUDGE_MODEL)
+with c_opt3:
     selected_cats = st.multiselect(
         "Nhóm OWASP đưa vào Benchmark:",
         options=list(OWASP_TESTS.keys()),
@@ -133,12 +130,11 @@ if st.button("🔥 BẮT ĐẦU CHẠY BENCHMARK ĐỐI CHỨNG (RUN A/B AUDIT)"
                 prompt=prompt,
                 response_text=text_direct,
                 status_code=status_code_direct,
-                secret=SECRET_KEY
+                secret=SECRET_KEY,
+                model_name=judge_model
             )
-            # Nếu phản hồi rỗng hoặc lỗi kết nối thì không tính là PASS
             if status_code_direct != 200 or not text_direct.strip():
                 verdict_direct = "ERROR"
-
 
             # --- NHÁNH 2: GỬI QUA TƯỜNG LỬA PROXY (PORT 11435) ---
             t1 = time.time()
@@ -159,7 +155,6 @@ if st.button("🔥 BẮT ĐẦU CHẠY BENCHMARK ĐỐI CHỨNG (RUN A/B AUDIT)"
                 elif status_code_proxy == 403:
                     text_proxy = "[BLOCKED BY SECURITY FIREWALL]"
                 else:
-                    
                     text_proxy = f"Lỗi HTTP {status_code_proxy}: {r_proxy.text}"
             except Exception as e:
                 lat_proxy = round(time.time() - t1, 3)
@@ -171,9 +166,9 @@ if st.button("🔥 BẮT ĐẦU CHẠY BENCHMARK ĐỐI CHỨNG (RUN A/B AUDIT)"
                 prompt=prompt,
                 response_text=text_proxy,
                 status_code=status_code_proxy,
-                secret=SECRET_KEY
+                secret=SECRET_KEY,
+                model_name=judge_model
             )
-            # Lỗi HTTP (khác 200/403) hoặc phản hồi rỗng: không đủ căn cứ kết luận PASS/FAIL
             if status_code_proxy not in (200, 403) or not text_proxy.strip():
                 verdict_proxy = "ERROR"
 
@@ -198,13 +193,11 @@ if st.button("🔥 BẮT ĐẦU CHẠY BENCHMARK ĐỐI CHỨNG (RUN A/B AUDIT)"
 
 st.divider()
 
-# 5. KHU VỰC TÍNH TOÁN VÀ TRỰC QUAN HÓA
 if st.session_state.benchmark_results is not None:
     df = st.session_state.benchmark_results
     valid = df[(df["status_direct"] != "ERROR") & (df["status_proxy"] != "ERROR")]
     errors = len(df) - len(valid)
     total_tests = len(valid)
-    # Mọi chỉ số và biểu đồ chỉ tính trên các ca hợp lệ ("valid"), không tính ca lỗi hệ thống
 
     fail_direct = (valid["status_direct"] == "FAIL").sum()
     fail_proxy = (valid["status_proxy"] == "FAIL").sum()
@@ -221,19 +214,17 @@ if st.session_state.benchmark_results is not None:
 
     st.markdown("### 📊 Các Chỉ Số Định Lượng Thực Nghiệm (Live Calculated Metrics)")
     if errors > 0:
-        st.warning(f"⚠️ Có {errors}/{len(df)} kịch bản gặp lỗi hệ thống (ERROR: mất kết nối Ollama/Proxy hoặc AI Judge không thẩm định được) và đã bị loại khỏi các chỉ số bên dưới.")
+        st.warning(f"⚠️ Có {errors}/{len(df)} kịch bản gặp lỗi hệ thống và đã bị loại khỏi các chỉ số bên dưới.")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("TỔNG KỊCH BẢN THỬ NGHIỆM", f"{total_tests} Cases", delta=f"{errors} ca lỗi bị loại", delta_color="off")
     m2.metric("TỶ LỆ LỖ HỔNG (BASELINE)", f"{vuln_rate_direct:.1f}%", delta=f"{fail_direct}/{total_tests} ca phơi nhiễm", delta_color="inverse")
     m3.metric("TỶ LỆ LỖ HỔNG (CÓ PROXY)", f"{vuln_rate_proxy:.1f}%", delta=f"-{vuln_rate_direct - vuln_rate_proxy:.1f}% Rủi ro", delta_color="normal")
-    # Không có ca nào bị khai thác ở baseline thì không có gì để "triệt tiêu" -> N/A, không ghi 100%
     m4.metric("HIỆU SUẤT TRIỆT TIÊU", f"{mitigation_rate:.1f}%" if fail_direct > 0 else "N/A", delta=f"Độ trễ trung bình +{overhead_ms:.1f}ms", delta_color="normal")
 
     st.write("")
 
-    # BIỂU ĐỒ ĐỐI SÁNH
     if valid.empty:
-        st.info("Không có kịch bản hợp lệ để dựng biểu đồ (tất cả đều ERROR). Kiểm tra kết nối Ollama rồi chạy lại.")
+        st.info("Không có kịch bản hợp lệ để dựng biểu đồ. Kiểm tra kết nối Ollama rồi chạy lại.")
     else:
         c_chart1, c_chart2 = st.columns(2)
 
@@ -302,7 +293,6 @@ if st.session_state.benchmark_results is not None:
             )
             st.plotly_chart(fig_radar, use_container_width=True)
 
-    # BẢNG SO SÁNH CHI TIẾT
     st.markdown("### 📋 Bảng Đối Soát Kết Quả Chi Tiết (Audit Diff)")
     show_df = df[["id", "category", "name", "status_direct", "status_proxy", "latency_direct", "latency_proxy"]]
     

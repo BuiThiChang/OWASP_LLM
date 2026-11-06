@@ -1,23 +1,28 @@
 """
 FILE: db_manager.py
-Mô tả: Quản lý CSDL tập trung (PostgreSQL với cơ chế Connection Pool & Fallback SQLite).
+Mô tả: Quản lý CSDL tập trung (PostgreSQL với cơ chế Connection Pool & Phân trang tối ưu).
 - Quản lý 2 bảng: audit_logs (Nhật ký kiểm toán) và threat_intelligence (Tình báo nguy cơ)
 - Chuẩn hóa quản lý phiên kết nối, chống rò rỉ Connection Pool
-- Tương thích toàn diện với: proxy_server.py, 1_red_team_audit.py, 2_live_sandbox.py, 3_soc_monitor.py
+- Hỗ trợ phân trang Pagination và LIMIT tối ưu cho SOC Monitor
 """
 
 import os
 import hashlib
 from datetime import datetime
+from typing import List, Dict, Any, Tuple
 import psycopg2
 from psycopg2 import pool
 
-# 1. CẤU HÌNH THÔNG TIN KẾT NỐI POSTGRESQL
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Nạp cấu hình từ .env
+
 DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
 DB_PORT = os.getenv("POSTGRES_PORT", "5432")
 DB_NAME = os.getenv("POSTGRES_DB", "llmvault_db")
 DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASS = os.getenv("POSTGRES_PASSWORD", "123456")  # Cập nhật đúng mật khẩu PostgreSQL của bạn
+DB_PASS = os.getenv("POSTGRES_PASSWORD", "123456")
 
 pg_pool = None
 
@@ -100,7 +105,7 @@ def init_db():
         
         conn.commit()
         cursor.close()
-        print("✅ Khởi tạo CSDL PostgreSQL (audit_logs & threat_intelligence) thành công!")
+        print("✅ Khởi tạo CSDL PostgreSQL thành công!")
     except Exception as e:
         print(f"❌ Lỗi khởi tạo CSDL PostgreSQL: {e}")
     finally:
@@ -129,12 +134,10 @@ def save_result(model, test_id, category, name, prompt, response, status, reason
         if conn:
             release_db_connection(conn)
 
-# Alias tương thích ngược nếu các file cũ gọi save_test_result
 save_test_result = save_result
 
 # 4. HÀM LƯU TÌNH BÁO MỐI ĐE DỌA (THREAT INTELLIGENCE)
 def save_or_update_threat_intel(attack_payload, vector_type, owasp_category, detected_source, detector_rule, tactics_desc=""):
-    """Tự động lưu hoặc tăng biến đếm nếu trùng mã băm SHA256 của mẫu tấn công."""
     if not attack_payload:
         return
         
@@ -162,7 +165,7 @@ def save_or_update_threat_intel(attack_payload, vector_type, owasp_category, det
         if conn:
             release_db_connection(conn)
 
-# 5. HÀM LẤY DỮ LIỆU BÁO CÁO SOC MONITOR
+# 5. HÀM LẤY LOGS TỔNG QUAN
 def get_recent_logs(limit=1000):
     conn = None
     logs = []
@@ -186,17 +189,53 @@ def get_recent_logs(limit=1000):
             release_db_connection(conn)
     return logs
 
-# ==============================================================================
-# HÀM XÓA SẠCH LỊCH SỬ DỮ LIỆU CSDL (HỖ TRỢ CẢ POSTGRESQL VÀ SQLITE)
-# ==============================================================================
+# 6. HÀM LẤY LOGS CÓ PHÂN TRANG (PAGINATION CHO SOC MONITOR)
+def get_paginated_logs(page: int = 1, page_size: int = 50, status_filter: str = "ALL") -> Tuple[List[Dict[str, Any]], int]:
+    conn = None
+    results = []
+    total_records = 0
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        where_clause = ""
+        params = []
+        if status_filter != "ALL":
+            where_clause = "WHERE status = %s"
+            params.append(status_filter)
+            
+        cursor.execute(f"SELECT COUNT(*) FROM audit_logs {where_clause}", tuple(params))
+        total_records = cursor.fetchone()[0]
+        
+        offset = (page - 1) * page_size
+        query = f"""
+            SELECT id, timestamp, model, test_id, category, name, prompt, response, status, reason 
+            FROM audit_logs 
+            {where_clause}
+            ORDER BY id DESC 
+            LIMIT %s OFFSET %s;
+        """
+        cursor.execute(query, tuple(params + [page_size, offset]))
+        rows = cursor.fetchall()
+        cursor.close()
+        
+        cols = ["id", "timestamp", "model", "test_id", "category", "name", "prompt", "response", "status", "reason"]
+        for row in rows:
+            results.append(dict(zip(cols, row)))
+    except Exception as e:
+        print(f"⚠️ Lỗi khi phân trang logs: {e}")
+    finally:
+        if conn:
+            release_db_connection(conn)
+            
+    return results, total_records
 
+# 7. HÀM XÓA SẠCH LỊCH SỬ DỮ LIỆU
 def clear_all_logs():
-    """Xóa sạch cả nhật ký kiểm toán và kho tri thức nguy cơ."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Xóa sạch cả 2 bảng cùng lúc và reset ID
         cursor.execute("TRUNCATE TABLE audit_logs, threat_intelligence RESTART IDENTITY CASCADE;")
         conn.commit()
         cursor.close()
@@ -207,6 +246,4 @@ def clear_all_logs():
         if conn:
             release_db_connection(conn)
 
-
-# Khởi tạo CSDL khi nạp module
 init_db()

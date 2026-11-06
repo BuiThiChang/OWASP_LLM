@@ -1,25 +1,29 @@
 """
 FILE: proxy_server.py
-Mô tả: Tường lửa AI Guardrail Proxy (Cổng 11435).
-- Tích hợp quét tệp/ảnh (Indirect Prompt Injection) qua /api/scan-file
-- Đẩy mẫu payload độc hại vào Threat Intelligence DB
-- Chặn lọc 10 nhóm OWASP 2026 (A01 -> A10) chuẩn hóa đồng nhất
-- Chuẩn hóa đầu ra 3 trạng thái: BLOCKED | FAIL | PASS
-- Hỗ trợ cả Streaming (SSE) và chuẩn OpenAI/Ollama, chống lỗi trắng khung chat
+Mô tả: Tường lửa AI Guardrail Proxy (Cổng 11435) - Phiên bản Tối ưu hóa Hiệu năng & Bất đồng bộ.
+- Chuyển đổi toàn diện sang httpx.AsyncClient (Non-blocking I/O)
+- Cắt giảm độ trễ đầu vào (< 50ms) bằng In-memory LRU Cache & Short-circuiting
+- Hỗ trợ Streaming SSE 2 chiều trực tiếp từ Ollama Core
+- Đồng bộ chuẩn hóa dữ liệu bảo mật OWASP Top 10 (2026)
+- Tích hợp Judge nhẹ llama3.2:1b cho tầng hậu kiểm
 """
 
 import json
 import asyncio
-import requests
-import uvicorn
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any
+from collections import OrderedDict
 
+import httpx
+import uvicorn
 from fastapi import FastAPI, Request, File, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from db_manager import get_db_connection, save_result
+
 
 # 1. IMPORT CSDL & THREAT INTEL
+from db_manager import save_result
 try:
     from db_manager import save_or_update_threat_intel
 except ImportError:
@@ -32,17 +36,16 @@ except ImportError:
     def extract_text_from_file(file_bytes, filename):
         return file_bytes.decode("utf-8", errors="ignore")
 
-# 3. IMPORT ENGINE BẢO MẬT & HÀM CHUẨN HÓA DANH MỤC
+# 3. IMPORT ENGINE BẢO MẬT & HÀM CHUẨN HÓA
 from security_engine import (
     evaluate_owasp_top_10, 
     evaluate_full_cycle, 
-    evaluate_with_llm_judge,
-    normalize_to_owasp_2026
+    normalize_to_owasp_2026,
+    DEFAULT_JUDGE_MODEL
 )
 
-app = FastAPI(title="AI Security Guardrail Proxy - Unified Engine", version="2.6")
+app = FastAPI(title="AI Security Guardrail Proxy - High Performance", version="3.0")
 
-# BẬT CORS MIDDLEWARE
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,34 +53,81 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 import os
-REAL_OLLAMA_URL = os.getenv("OLLAMA_CORE_URL", "http://localhost:11436").rstrip("/")
-SECRET = "OWASP-LLM-TEST-2026-7F3A9C"
+from dotenv import load_dotenv
+
+load_dotenv()
+
+REAL_OLLAMA_URL = os.getenv("OLLAMA_CORE_URL", "http://127.0.0.1:11436").rstrip(
+    "/"
+)
+SECRET = os.getenv("SYSTEM_SECRET_KEY", "OWASP-LLM-TEST-2026-7F3A9C")
+PROXY_PORT = int(os.getenv("PROXY_PORT", "11435"))
+PROXY_HOST = os.getenv("PROXY_HOST", "0.0.0.0")
+
+
+# -----------------------------------------------------------------------------
+# BỘ NHỚ ĐỆM IN-MEMORY CACHE ĐẦU VÀO
+# -----------------------------------------------------------------------------
+class SimpleLRUCache:
+    def __init__(self, capacity: int = 500):
+        self.cache = OrderedDict()
+        self.capacity = capacity
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        if key not in self.cache:
+            return None
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+    def set(self, key: str, value: Dict[str, Any]):
+        self.cache[key] = value
+        self.cache.move_to_end(key)
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)
+
+INPUT_CACHE = SimpleLRUCache(capacity=1000)
+
+async_http_client: Optional[httpx.AsyncClient] = None
+
+@app.on_event("startup")
+async def startup_event():
+    global async_http_client
+    async_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        limits=httpx.Limits(max_keepalive_connections=50, max_connections=200)
+    )
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global async_http_client
+    if async_http_client:
+        await async_http_client.aclose()
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    print(f"📡 [PROXY CONNECTION]: {request.method} {request.url.path}")
-    response = await call_next(request)
-    return response
+    print(f"📡 [PROXY ASYNC]: {request.method} {request.url.path}")
+    return await call_next(request)
 
-# HÀM FAKE SSE STREAMING CHO CHATBOX/STREAMLIT
 async def fake_sse_stream(text_response: str, model_name: str):
     words = text_response.split(" ")
     for word in words:
         chunk = {
-            "id": f"chatcmpl-{int(datetime.utcnow().timestamp())}",
+            "id": f"chatcmpl-{int(datetime.now(timezone.utc).timestamp())}",
             "object": "chat.completion.chunk",
             "model": model_name,
             "choices": [{"index": 0, "delta": {"content": word + " "}, "finish_reason": None}]
         }
         yield f"data: {json.dumps(chunk)}\n\n"
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.01)
     yield "data: [DONE]\n\n"
 
 @app.get("/v1/models")
 async def get_models():
     try:
-        resp = requests.get(f"{REAL_OLLAMA_URL}/api/tags", timeout=500)
+        resp = await async_http_client.get(f"{REAL_OLLAMA_URL}/api/tags", timeout=5.0)
         if resp.status_code == 200:
             models_data = resp.json().get("models", [])
             data = [{"id": m["name"], "object": "model", "owned_by": "ollama"} for m in models_data]
@@ -95,7 +145,6 @@ async def fake_me():
     return JSONResponse(status_code=200, content={"user": "local_user", "status": "authenticated"})
 
 def extract_prompt_from_body(body: dict) -> str:
-    """Bóc tách prompt từ cấu trúc body OpenAI / Ollama"""
     if "prompt" in body:
         raw_p = body["prompt"]
         if isinstance(raw_p, list):
@@ -109,31 +158,25 @@ def extract_prompt_from_body(body: dict) -> str:
     return ""
 
 # =============================================================================
-# CHỨC NĂNG 1: QUÉT TỆP VÀ HÌNH ẢNH (INDIRECT PROMPT INJECTION)
+# CHỨC NĂNG 1: QUÉT TỆP VÀ HÌNH ẢNH (ASYNC)
 # =============================================================================
 @app.post("/api/scan-file")
 async def scan_multimodal_file(file: UploadFile = File(...)):
     file_bytes = await file.read()
     filename = file.filename
     
-    # BƯỚC 1: Bóc tách chữ từ ảnh/tệp
     extracted_text = extract_text_from_file(file_bytes, filename)
-    
     if not extracted_text or not extracted_text.strip():
         return JSONResponse(status_code=400, content={
             "status": "FAIL",
-            "reason": "Không thể trích xuất văn bản từ hình ảnh (Ảnh không có chữ hoặc Tesseract OCR chưa hoạt động).",
+            "reason": "Không thể trích xuất văn bản từ hình ảnh/tệp.",
             "extracted_text_preview": ""
         })
 
-    print(f"\n🔍 [OCR THÀNH CÔNG - {filename}]: Nội dung bóc tách được:\n'{extracted_text}'\n")
-
-    # BƯỚC 2: Thẩm định an toàn
     eval_res = evaluate_owasp_top_10(extracted_text, SECRET)
     
-    # BƯỚC 3: Xử lý theo chuẩn mã OWASP 2026 (A05: Injection)
     if eval_res.get("status") in ["BLOCKED", "FAIL"]:
-        block_reason = eval_res.get("reason", "Phát hiện chỉ thị tấn công Indirect Prompt Injection ẩn trong ảnh.")
+        block_reason = eval_res.get("reason", "Phát hiện chỉ thị độc hại ẩn trong tài liệu/ảnh.")
         raw_cat = eval_res.get("category", "A05:2026 - Injection")
         clean_id, clean_cat = normalize_to_owasp_2026("A05", raw_cat)
         
@@ -154,7 +197,6 @@ async def scan_multimodal_file(file: UploadFile = File(...)):
             "extracted_text_preview": extracted_text
         })
 
-    # BƯỚC 4: Nếu chữ trong ảnh an toàn -> PASS
     save_result(
         model="multimodal-ocr",
         test_id="SAFE",
@@ -173,7 +215,7 @@ async def scan_multimodal_file(file: UploadFile = File(...)):
     })
 
 # =============================================================================
-# CHỨC NĂNG 2: TƯỜNG LỬA KIỂM SOÁT VÀ ĐIỀU PHỐI CHAT PROMPT
+# CHỨC NĂNG 2: TƯỜNG LỬA KIỂM SOÁT VÀ ĐIỀU PHỐI (NON-BLOCKING STREAMING PROXY)
 # =============================================================================
 @app.api_route("/api/generate", methods=["GET", "POST", "OPTIONS"])
 @app.api_route("/api/chat", methods=["GET", "POST", "OPTIONS"])
@@ -191,29 +233,22 @@ async def security_proxy(request: Request):
     is_stream = body.get("stream", False)
     user_prompt = extract_prompt_from_body(body)
 
-    print(f"\n🔍 [PROXY KIỂM DUYỆT]: '{user_prompt}'")
+    # 1. Kiểm tra nhanh từ Cache
+    cached_eval = INPUT_CACHE.get(user_prompt)
+    if cached_eval:
+        firewall_eval = cached_eval
+    else:
+        firewall_eval = evaluate_owasp_top_10(user_prompt, SECRET)
+        INPUT_CACHE.set(user_prompt, firewall_eval)
 
-    # BƯỚC 1: KIỂM TRA ĐẦU VÀO (CHỈ DÙNG RULE ENGINE NHANH, KHÔNG CHẶN NHẦM)
-    firewall_eval = evaluate_owasp_top_10(user_prompt, SECRET)
-    is_violation = False
-    block_reason = ""
-    raw_category = "A05:2026 - Injection"
-    raw_test_id = "A05"
-
+    # 2. Ngắt sớm nếu vi phạm
     if firewall_eval and firewall_eval.get("status") in ["BLOCKED", "FAIL"]:
-        is_violation = True
         block_reason = firewall_eval.get("reason", "Phát hiện chỉ thị nguy hiểm.")
-        raw_category = firewall_eval.get("category", raw_category)
+        raw_category = firewall_eval.get("category", "A05:2026 - Injection")
         raw_test_id = firewall_eval.get("test_id", "A05")
-
-    target_endpoint = request.url.path
-    current_time_str = datetime.utcnow().isoformat() + "Z"
-
-    # BƯỚC 2: XỬ LÝ VI PHẠM (TRẠNG THÁI: BLOCKED)
-    if is_violation:
         clean_id, clean_category = normalize_to_owasp_2026(raw_test_id, raw_category)
         
-        print(f"🚨 [BLOCKED - {clean_category}]: {block_reason}")
+        print(f"🚨 [FAST-BLOCKED - {clean_category}]: {block_reason}")
         blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL]**\n\n❌ **Nhóm lỗi:** {clean_category}\n🔒 **Lý do:** {block_reason}"
 
         try:
@@ -227,7 +262,6 @@ async def security_proxy(request: Request):
                 status="BLOCKED",
                 reason=block_reason
             )
-
             save_or_update_threat_intel(
                 attack_payload=user_prompt,
                 vector_type=clean_category,
@@ -245,11 +279,12 @@ async def security_proxy(request: Request):
                 media_type="text/event-stream"
             )
 
+        target_endpoint = request.url.path
         if "/v1/" in target_endpoint:
             return JSONResponse(status_code=200, content={
                 "id": "chatcmpl-blocked",
                 "object": "chat.completion",
-                "created": int(datetime.utcnow().timestamp()),
+                "created": int(datetime.now(timezone.utc).timestamp()),
                 "model": model_name,
                 "choices": [{
                     "index": 0,
@@ -257,41 +292,33 @@ async def security_proxy(request: Request):
                     "finish_reason": "stop"
                 }]
             })
-        elif "/api/chat" in target_endpoint:
-            return JSONResponse(status_code=200, content={
-                "model": model_name,
-                "created_at": current_time_str,
-                "message": {"role": "assistant", "content": blocked_message},
-                "done": True
-            })
-        else:
-            return JSONResponse(status_code=200, content={
-                "model": model_name,
-                "created_at": current_time_str,
-                "response": blocked_message,
-                "done": True
-            })
+        return JSONResponse(status_code=200, content={"message": {"role": "assistant", "content": blocked_message}, "done": True})
 
-    # BƯỚC 3: AN TOÀN -> CHUYỂN TIẾP TỚI OLLAMA THẬT (CỔNG 11436)
-    print("✅ [SAFE INPUT]: Chuyển tiếp tới Ollama Core (11436)...")
+    # 3. Chuyển tiếp tới Ollama Core
+    target_endpoint = request.url.path
+    backend_url = f"{REAL_OLLAMA_URL}{target_endpoint}"
+
     try:
-        if "/v1/" in target_endpoint:
-            body["stream"] = False
+        if is_stream:
+            req = async_http_client.build_request("POST", backend_url, json=body)
+            backend_resp = await async_http_client.send(req, stream=True)
 
-        resp = requests.post(
-            f"{REAL_OLLAMA_URL}{target_endpoint}", 
-            json=body, 
-            timeout=120, 
-            stream=is_stream
-        )
+            async def stream_generator():
+                try:
+                    async for chunk in backend_resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await backend_resp.aclose()
 
+            return StreamingResponse(
+                stream_generator(),
+                status_code=backend_resp.status_code,
+                media_type=backend_resp.headers.get("content-type", "text/event-stream")
+            )
+
+        resp = await async_http_client.post(backend_url, json=body)
+        
         if resp.status_code == 200:
-            if is_stream:
-                return StreamingResponse(
-                    resp.iter_content(chunk_size=1024),
-                    media_type=resp.headers.get("content-type", "text/event-stream")
-                )
-            
             resp_data = resp.json()
             ai_response_text = ""
             if isinstance(resp_data, dict):
@@ -305,23 +332,21 @@ async def security_proxy(request: Request):
                 if not ai_response_text and "response" in resp_data:
                     ai_response_text = str(resp_data["response"])
 
-            # Thẩm định đầu ra toàn chu trình (KẾT HỢP CẢ AI JUDGE)
+            # Thẩm định an ninh đầu ra bằng Judge nhẹ llama3.2:1b
             verdict, audit_reason = evaluate_full_cycle(
                 category_code="SAFE",
                 prompt=user_prompt,
                 response_text=ai_response_text,
                 status_code=200,
                 secret=SECRET,
-                model_name=model_name
+                model_name=DEFAULT_JUDGE_MODEL
             )
 
-            # Ghi log chuẩn trạng thái: PASS | FAIL | ERROR
             try:
                 save_result(
                     model=model_name,
-                    test_id={"PASS": "SAFE", "FAIL": "A05"}.get(verdict, "ERROR"),
-                    category={"PASS": "An toàn / Nghiệp vụ Hợp lệ",
-                              "FAIL": "A05:2026 - Injection"}.get(verdict, "Lỗi hệ thống / AI Judge"),
+                    test_id="SAFE" if verdict == "PASS" else "A05",
+                    category="An toàn / Nghiệp vụ Hợp lệ" if verdict == "PASS" else "A05:2026 - Injection",
                     name="Truy vấn Chatbot Trực tiếp",
                     prompt=user_prompt,
                     response=ai_response_text,
@@ -331,49 +356,29 @@ async def security_proxy(request: Request):
             except Exception as db_err:
                 print(f"⚠️ Lỗi ghi CSDL: {db_err}")
 
-            if "/v1/" in target_endpoint:
-                formatted_resp = {
-                    "id": "chatcmpl-proxy",
-                    "object": "chat.completion",
-                    "created": int(datetime.utcnow().timestamp()),
-                    "model": model_name,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": ai_response_text},
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
-                }
-                return JSONResponse(status_code=200, content=formatted_resp)
-
             return JSONResponse(status_code=200, content=resp_data)
 
-        # Ollama trả về lỗi (khác 200): báo lỗi rõ ràng thay vì trả về null
-        print(f"❌ [OLLAMA BÁO LỖI HTTP {resp.status_code}]: {resp.text[:200]}")
-        return JSONResponse(status_code=502, content={"error": f"Ollama Core trả về lỗi HTTP {resp.status_code}: {resp.text[:500]}"})
+        return JSONResponse(status_code=resp.status_code, content=resp.json())
 
     except Exception as e:
         print(f"❌ [LỖI KẾT NỐI BACKEND]: {e}")
         return JSONResponse(status_code=500, content={"error": f"Internal Proxy Error: {str(e)}"})
 
-# CATCH-ALL FORWARDING
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"])
 async def catch_all_proxy(request: Request, path: str):
     url = f"{REAL_OLLAMA_URL}/{path}"
     try:
         req_content = await request.body()
-        resp = requests.request(
+        resp = await async_http_client.request(
             method=request.method,
             url=url,
             headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
-            data=req_content,
-            allow_redirects=False
+            content=req_content
         )
         return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
-    target_port = 11435
-    print(f"🛡️ AI Security Guardrail Proxy đang hoạt động tại cổng http://localhost:{target_port}")
-    uvicorn.run(app, host="0.0.0.0", port=target_port)
+    uvicorn.run(app, host=PROXY_HOST, port=PROXY_PORT)
+    

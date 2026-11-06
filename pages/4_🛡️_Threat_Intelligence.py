@@ -3,6 +3,7 @@ FILE: pages/4_threat_intelligence.py
 Mô tả: Phân hệ Kho Tri thức Nguy cơ An ninh mạng (Threat Intelligence DB).
 - Tổng hợp mẫu payload tấn công từ Red Team & Blue Team (Tường lửa Proxy)
 - Chuẩn hóa phân loại theo 10 nhóm OWASP 2026 (A01 -> A10)
+- Quản lý đóng/trả kết nối PostgreSQL Pool an toàn chống rò rỉ kết nối
 - Định dạng chuẩn cột thời gian xuất hiện: DD/MM/YYYY HH:MM:SS
 """
 
@@ -13,7 +14,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from db_manager import get_db_connection
+from db_manager import get_db_connection, release_db_connection
 from security_engine import normalize_to_owasp_2026
 
 st.set_page_config(page_title="Kho Tri thức Nguy cơ An ninh mạng", page_icon="🛡️", layout="wide")
@@ -21,18 +22,21 @@ st.set_page_config(page_title="Kho Tri thức Nguy cơ An ninh mạng", page_ico
 st.title("🛡️ Kho Tri thức Nguy cơ An ninh mạng (Threat Intelligence DB)")
 st.caption("Tổng hợp mẫu tấn công từ Red Team & Blue Team phục vụ công tác phân tích nghiệp vụ (Chuẩn OWASP 2026)")
 
+conn = None
 try:
     conn = get_db_connection()
     df = pd.read_sql("SELECT * FROM threat_intelligence ORDER BY last_seen DESC", conn)
-    conn.close()
 except Exception as e:
     st.error(f"❌ Không thể kết nối CSDL Threat Intelligence: {e}")
     st.stop()
+finally:
+    if conn:
+        release_db_connection(conn)
 
 if df.empty:
     st.info("ℹ️ Chưa ghi nhận mẫu tri thức nguy cơ nào trong hệ thống.")
 else:
-    # 1. CHUẨN HÓA CỘT THỜI GIAN LAST_SEEN (CHỐNG LỖI ASSERTIONERROR)
+    # 1. CHUẨN HÓA CỘT THỜI GIAN LAST_SEEN
     def parse_threat_time(val):
         if pd.isna(val) or val == "" or val is None:
             return ""
@@ -83,7 +87,6 @@ else:
 
     # 5. Bảng hiển thị
     st.markdown(f"### 📋 Danh sách Mẫu Tấn công & Thủ đoạn ({len(filtered_df)})")
-    # Chỉ dùng các cột thực có trong bảng threat_intelligence (không có cột threat_id / severity_level)
     show_cols = ['id', 'signature_hash', 'vector_type', 'Nhóm OWASP Chuẩn', 'attack_payload',
                  'detected_source', 'detector_rule', 'occurrence_count', 'Xuất hiện gần nhất']
     st.dataframe(
