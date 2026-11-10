@@ -21,12 +21,17 @@ from test_cases import OWASP_TESTS
 from security_engine import evaluate_full_cycle, perturb_prompt, DEFAULT_JUDGE_MODEL
 from rag_engine import build_rag_system_prompt
 from db_manager import save_result
+from auth_manager import require_auth, render_user_sidebar, ROLE_ADMIN
 try:
     from db_manager import save_or_update_threat_intel
 except ImportError:
     def save_or_update_threat_intel(*args, **kwargs): pass
 
 st.set_page_config(page_title="Red Team Security Audit", page_icon="🎯", layout="wide")
+
+# Kiểm tra phân quyền: Chỉ Trưởng Công an Xã (Admin) mới được chạy Red Team
+current_user = require_auth(allowed_roles=[ROLE_ADMIN])
+render_user_sidebar()
 
 st.markdown("""
 <style>
@@ -106,7 +111,9 @@ def run_single_audit_task(item: dict) -> dict:
                 {"role": "system", "content": rag_prompt},
                 {"role": "user", "content": active_prompt}
             ],
-            "stream": False
+            "stream": False,
+            "temperature": 0.0,
+            "options": {"temperature": 0.0}
         }
         resp = requests.post(proxy_url, json=payload, timeout=600)
         latency = round(time.time() - start_t, 2)

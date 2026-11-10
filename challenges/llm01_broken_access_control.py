@@ -12,12 +12,14 @@ DENY_PATTERNS = [
     r"read\s+(other\s+)?users?\s+data",
     r"bypass\s+role\s+restrictions?",
     r"user_id\s*[:=]\s*(?!current_user)\w+",
+    r"household_id\s*[:=]\s*\w+",
     # Tiếng Việt patterns
     r"truy\s+cập\s+(lịch\s+sử|hồ\s+sơ)\s+(của\s+)?người\s+khác",
     r"đọc\s+dữ\s+liệu\s+(bí\s+mật|nội\s+bộ|trái\s+phép)",
     r"leo\s+thang\s+đặc\s+quyền",
     r"vượt\s+quyền\s+(truy\s+cập|quản\s+trị)",
-    r"lấy\s+thông\s+tin\s+tài\s+khoản\s+khác"
+    r"lấy\s+thông\s+tin\s+tài\s+khoản\s+khác",
+    r"(trích\s+xuất|danh\s+sách|lấy|liệt\s+kê).*?(cccd|căn\s+cước|nhân\s+khẩu|hộ\s+khẩu)"
 ]
 
 REFUSAL_PATTERNS = [

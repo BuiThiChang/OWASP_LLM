@@ -19,12 +19,17 @@ if ROOT_DIR not in sys.path:
 
 from db_manager import get_paginated_logs, get_recent_logs, clear_all_logs
 from security_engine import normalize_to_owasp_2026
+from auth_manager import require_auth, render_user_sidebar, ROLE_ADMIN, ROLE_OFFICER
 
 st.set_page_config(
     page_title="SOC Security Monitor & Audit Trail",
     page_icon="📊",
     layout="wide"
 )
+
+# Chỉ Trưởng Công an Xã (Admin) và Cán bộ (Officer) mới được xem SOC Monitor
+current_user = require_auth(allowed_roles=[ROLE_ADMIN, ROLE_OFFICER])
+render_user_sidebar()
 
 st.markdown("""
 <style>

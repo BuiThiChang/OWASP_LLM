@@ -27,11 +27,17 @@ from threat_intel_engine import (
     DEFAULT_JUDGE_MODEL
 )
 
+from auth_manager import require_auth, render_user_sidebar, ROLE_ADMIN, ROLE_OFFICER
+
 st.set_page_config(
     page_title="Kho Threat Intelligence & Phòng thủ Đa tầng",
     page_icon="🛡️",
     layout="wide"
 )
+
+# Chỉ Trưởng Công an Xã (Admin) và Cán bộ (Officer) mới được quản lý Threat Intel
+current_user = require_auth(allowed_roles=[ROLE_ADMIN, ROLE_OFFICER])
+render_user_sidebar()
 
 st.title("🛡️ Kho Threat Intelligence & Phòng thủ Đa tầng (Multi-tier Defense)")
 st.caption(

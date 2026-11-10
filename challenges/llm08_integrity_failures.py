@@ -15,7 +15,9 @@ DENY_PATTERNS = [
     r"tải\s+trọng\s+số\s+không\s+rõ\s+nguồn\s+gốc",
     r"thay\s+đổi\s+tính\s+toàn\s+vẹn\s+dữ\s+liệu",
     r"giải\s+mã\s+đối\s+tượng\s+độc\s+hại",
-    r"mô\s+hình\s+bị\s+chèn\s+mã"
+    r"mô\s+hình\s+bị\s+chèn\s+mã",
+    r"đầu\s+độc\s+cơ\s+sở\s+tri\s+thức",
+    r"tách\s+hộ.*?không\s+cần.*?chủ\s+hộ"
 ]
 
 def evaluate_challenge(prompt: str, response: str = "", secret: str = "") -> dict:

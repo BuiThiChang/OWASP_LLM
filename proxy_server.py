@@ -236,6 +236,14 @@ async def security_proxy(request: Request):
     is_stream = body.get("stream", False)
     user_prompt = extract_prompt_from_body(body)
 
+    # Chuẩn hóa nhiệt độ sinh chữ (temperature = 0.0) tối ưu cho nghiệp vụ hành chính & chống ảo giác
+    if "temperature" not in body:
+        body["temperature"] = 0.0
+    if "options" not in body:
+        body["options"] = {"temperature": 0.0}
+    elif isinstance(body.get("options"), dict) and "temperature" not in body["options"]:
+        body["options"]["temperature"] = 0.0
+
     # 1. Kiểm tra qua Hệ thống Phòng thủ Đa tầng (Multi-tier Defense Pipeline)
     cached_eval = INPUT_CACHE.get(user_prompt)
     if cached_eval:
