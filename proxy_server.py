@@ -41,8 +41,11 @@ from security_engine import (
     evaluate_owasp_top_10, 
     evaluate_full_cycle, 
     normalize_to_owasp_2026,
-    DEFAULT_JUDGE_MODEL
+    DEFAULT_JUDGE_MODEL,
+    COMPILED_CCCD,
+    COMPILED_POLICE_SECRETS
 )
+from threat_intel_engine import inspect_threat_multitier
 
 app = FastAPI(title="AI Security Guardrail Proxy - High Performance", version="3.0")
 
@@ -233,23 +236,23 @@ async def security_proxy(request: Request):
     is_stream = body.get("stream", False)
     user_prompt = extract_prompt_from_body(body)
 
-    # 1. Kiểm tra nhanh từ Cache
+    # 1. Kiểm tra qua Hệ thống Phòng thủ Đa tầng (Multi-tier Defense Pipeline)
     cached_eval = INPUT_CACHE.get(user_prompt)
     if cached_eval:
         firewall_eval = cached_eval
     else:
-        firewall_eval = evaluate_owasp_top_10(user_prompt, SECRET)
+        firewall_eval = inspect_threat_multitier(user_prompt, SECRET, use_guard_model=False)
         INPUT_CACHE.set(user_prompt, firewall_eval)
 
     # 2. Ngắt sớm nếu vi phạm
     if firewall_eval and firewall_eval.get("status") in ["BLOCKED", "FAIL"]:
         block_reason = firewall_eval.get("reason", "Phát hiện chỉ thị nguy hiểm.")
-        raw_category = firewall_eval.get("category", "A05:2026 - Injection")
-        raw_test_id = firewall_eval.get("test_id", "A05")
-        clean_id, clean_category = normalize_to_owasp_2026(raw_test_id, raw_category)
+        clean_category = firewall_eval.get("category_name", "A05:2026 - Injection")
+        clean_id = firewall_eval.get("category_code", "A05")
+        layer_triggered = firewall_eval.get("layer_triggered", "Tường lửa AI Proxy")
         
-        print(f"🚨 [FAST-BLOCKED - {clean_category}]: {block_reason}")
-        blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL]**\n\n❌ **Nhóm lỗi:** {clean_category}\n🔒 **Lý do:** {block_reason}"
+        print(f"🚨 [{layer_triggered} - {clean_category}]: {block_reason}")
+        blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL]**\n\n🛡️ **Lớp đánh chặn:** {layer_triggered}\n❌ **Nhóm lỗi:** {clean_category}\n🔒 **Lý do:** {block_reason}"
 
         try:
             save_result(
@@ -332,7 +335,7 @@ async def security_proxy(request: Request):
                 if not ai_response_text and "response" in resp_data:
                     ai_response_text = str(resp_data["response"])
 
-            # Thẩm định an ninh đầu ra bằng Judge nhẹ llama3.2:1b
+            # Thẩm định an ninh đầu ra bằng Judge nhẹ llama3.2:1b & DLP
             verdict, audit_reason = evaluate_full_cycle(
                 category_code="SAFE",
                 prompt=user_prompt,
@@ -342,11 +345,46 @@ async def security_proxy(request: Request):
                 model_name=DEFAULT_JUDGE_MODEL
             )
 
+            is_leak = (verdict == "FAIL" or COMPILED_CCCD.search(ai_response_text) or COMPILED_POLICE_SECRETS.search(ai_response_text))
+
+            if is_leak:
+                dlp_reason = audit_reason if verdict == "FAIL" else "Phát hiện rò rỉ dữ liệu cá nhân (Số CCCD 12 chữ số) trong phản hồi đầu ra."
+                blocked_message = f"🚨 **[BLOCKED BY SECURITY FIREWALL - OUTPUT DLP]**\n\n❌ **Nhóm lỗi:** A01:2026 - Broken Access Control & SSRF (DLP)\n🔒 **Lý do:** {dlp_reason}"
+                print(f"🚨 [OUTPUT DLP BLOCKED]: {dlp_reason}")
+
+                try:
+                    save_result(
+                        model=model_name,
+                        test_id="A01",
+                        category="A01:2026 - Broken Access Control & SSRF",
+                        name="AI Guardrail Proxy - Output DLP",
+                        prompt=user_prompt,
+                        response="[BLOCKED BY SECURITY FIREWALL - OUTPUT DLP]",
+                        status="BLOCKED",
+                        reason=dlp_reason
+                    )
+                except Exception as db_err:
+                    print(f"⚠️ Lỗi ghi CSDL DLP: {db_err}")
+
+                if "/v1/" in target_endpoint:
+                    return JSONResponse(status_code=200, content={
+                        "id": "chatcmpl-dlp-blocked",
+                        "object": "chat.completion",
+                        "created": int(datetime.now(timezone.utc).timestamp()),
+                        "model": model_name,
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": blocked_message},
+                            "finish_reason": "stop"
+                        }]
+                    })
+                return JSONResponse(status_code=200, content={"message": {"role": "assistant", "content": blocked_message}, "done": True})
+
             try:
                 save_result(
                     model=model_name,
-                    test_id="SAFE" if verdict == "PASS" else "A05",
-                    category="An toàn / Nghiệp vụ Hợp lệ" if verdict == "PASS" else "A05:2026 - Injection",
+                    test_id="SAFE",
+                    category="An toàn / Nghiệp vụ Hợp lệ",
                     name="Truy vấn Chatbot Trực tiếp",
                     prompt=user_prompt,
                     response=ai_response_text,

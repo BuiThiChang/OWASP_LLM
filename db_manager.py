@@ -236,12 +236,12 @@ def clear_all_logs():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("TRUNCATE TABLE audit_logs, threat_intelligence RESTART IDENTITY CASCADE;")
+        cursor.execute("TRUNCATE TABLE audit_logs RESTART IDENTITY CASCADE;")
         conn.commit()
         cursor.close()
-        return True, "Đã xóa sạch toàn bộ CSDL (audit_logs & threat_intelligence)!"
+        return True, "Đã xóa sạch toàn bộ lịch sử kiểm thử (audit_logs)!"
     except Exception as e:
-        return False, f"Lỗi khi xóa CSDL: {e}"
+        return False, f"Lỗi khi xóa lịch sử kiểm thử: {e}"
     finally:
         if conn:
             release_db_connection(conn)

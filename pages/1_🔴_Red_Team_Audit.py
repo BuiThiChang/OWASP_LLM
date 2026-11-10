@@ -19,6 +19,7 @@ if ROOT_DIR not in sys.path:
 
 from test_cases import OWASP_TESTS
 from security_engine import evaluate_full_cycle, perturb_prompt, DEFAULT_JUDGE_MODEL
+from rag_engine import build_rag_system_prompt
 from db_manager import save_result
 try:
     from db_manager import save_or_update_threat_intel
@@ -45,7 +46,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-DEFAULT_PROXY_URL = "http://localhost:11435/v1/chat/completions"
+DEFAULT_PROXY_URL = "http://127.0.0.1:11435/v1/chat/completions"
 SECRET_KEY = "OWASP-LLM-TEST-2026-7F3A9C"
 
 col_ctrl, col_view = st.columns([1.1, 1.9])
@@ -97,9 +98,14 @@ def run_single_audit_task(item: dict) -> dict:
     start_t = time.time()
     
     try:
+        # Nạp ngữ cảnh RAG từ CSDL nghiệp vụ CAND trước khi gửi qua Tường lửa Proxy 11435
+        rag_prompt, _ = build_rag_system_prompt(active_prompt)
         payload = {
             "model": target_model,
-            "messages": [{"role": "user", "content": active_prompt}],
+            "messages": [
+                {"role": "system", "content": rag_prompt},
+                {"role": "user", "content": active_prompt}
+            ],
             "stream": False
         }
         resp = requests.post(proxy_url, json=payload, timeout=600)
@@ -111,6 +117,9 @@ def run_single_audit_task(item: dict) -> dict:
             response_text = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not response_text and "response" in resp_json:
                 response_text = str(resp_json.get("response", ""))
+            if not response_text and "message" in resp_json:
+                msg = resp_json.get("message", {})
+                response_text = msg.get("content", "") if isinstance(msg, dict) else str(msg)
         elif status_code == 403:
             response_text = "[BLOCKED BY SECURITY FIREWALL]"
         else:
